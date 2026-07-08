@@ -23,6 +23,21 @@ const EXTERNAL_VENDOR = 'EXTERNAL (VENDOR)';
 const EXTERNAL_SCRAP = 'EXTERNAL (SCRAP)';
 
 /**
+ * 스프레드시트를 열 때 상단에 '📦 Inventory' 메뉴를 추가한다.
+ * (설치/유지보수 함수를 편집기 없이 시트에서 바로 실행할 수 있게 해줌)
+ */
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('📦 Inventory')
+    .addItem('트랜잭션 제출 (Submit)', 'submitTransaction')
+    .addSeparator()
+    .addItem('입력폼 초기 설정 (Setup)', 'setupInputSheet')
+    .addItem('편집 트리거 등록 (Install Trigger)', 'createTriggers')
+    .addItem('시리얼 텍스트 변환 (Migrate Serials)', 'migrateSerialsToText')
+    .addToUi();
+}
+
+/**
  * 1. Input_Transaction 시트의 UI 구조 및 수식을 초기화하는 함수
  * (현재 배포된 시트 상태 — 검색 영역 + LET/LAMBDA 헬퍼 수식 — 를 재현하도록 갱신)
  */
@@ -426,4 +441,85 @@ function isSerialManaged_(ss, itemName) {
     }
   }
   return 'NO';
+}
+
+/* ────────────────────────────────────────────────────────────
+ * 설치/유지보수용 함수 (필요할 때 한 번씩 수동 실행)
+ * ──────────────────────────────────────────────────────────── */
+
+/**
+ * [1회 실행] updateDynamicUI 를 '수정 시(onEdit)' 트리거로 자동 등록한다.
+ * - Apps Script 편집기에서 이 함수를 한 번만 실행하면 트리거가 만들어진다.
+ * - 이미 같은 트리거가 있으면 중복 생성하지 않는다(중복 실행 방지).
+ */
+function createTriggers() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+
+  // 기존에 updateDynamicUI 로 연결된 onEdit 트리거가 있는지 확인
+  const existing = ScriptApp.getProjectTriggers();
+  for (let i = 0; i < existing.length; i++) {
+    const t = existing[i];
+    if (t.getHandlerFunction() === 'updateDynamicUI' &&
+        t.getEventType() === ScriptApp.EventType.ON_EDIT) {
+      ui.alert('ℹ️ 이미 updateDynamicUI(수정 시) 트리거가 등록되어 있습니다. 추가 작업이 필요 없습니다.');
+      return;
+    }
+  }
+
+  // 없으면 새로 등록
+  ScriptApp.newTrigger('updateDynamicUI')
+    .forSpreadsheet(ss)
+    .onEdit()
+    .create();
+
+  ui.alert('✅ 완료: updateDynamicUI(수정 시) 트리거를 등록했습니다.');
+}
+
+/**
+ * [1회 실행] 원장(Ledger)에 숫자로 저장된 기존 시리얼 번호를 텍스트로 일괄 변환한다.
+ * - E열(Serial Number)을 텍스트 형식으로 고정한 뒤, 숫자로 들어간 값을 문자열로 다시 기록한다.
+ * - 'N/A' 및 이미 텍스트인 값은 그대로 둔다.
+ * - 정수 시리얼의 소수점 표기(예: 123456789.0) 문제도 함께 정리된다.
+ */
+function migrateSerialsToText() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ledgerSheet = ss.getSheetByName('Ledger');
+  const ui = SpreadsheetApp.getUi();
+  const last = ledgerSheet.getLastRow();
+  if (last < 2) {
+    ui.alert('ℹ️ 원장에 데이터가 없습니다.');
+    return;
+  }
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+
+    const serialRange = ledgerSheet.getRange(2, LEDGER_COL.SERIAL + 1, last - 1, 1); // E열
+    serialRange.setNumberFormat('@'); // 열 형식을 텍스트로 고정
+
+    const values = serialRange.getValues();
+    let changed = 0;
+    for (let i = 0; i < values.length; i++) {
+      const v = values[i][0];
+      if (typeof v === 'number') {
+        // 정수는 소수점 없이, 그 외에는 일반 문자열로 변환
+        const asText = Number.isInteger(v) ? String(v) : String(v);
+        values[i][0] = asText;
+        changed++;
+      }
+    }
+
+    if (changed > 0) {
+      serialRange.setValues(values);
+      SpreadsheetApp.flush();
+    }
+    ui.alert('✅ 완료: 숫자로 저장된 시리얼 ' + changed + '건을 텍스트로 변환했습니다.');
+
+  } catch (error) {
+    ui.alert('❌ 오류: ' + error.toString());
+  } finally {
+    lock.releaseLock();
+  }
 }
