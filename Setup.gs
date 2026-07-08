@@ -51,7 +51,9 @@ function setupInputSheet() {
     inputSheet = ss.insertSheet('Input_Transaction');
   }
   // 기존의 유효성 검사 및 내용 전체 초기화 (충돌 방지)
-  inputSheet.clearDataValidations();
+  // ※ clearDataValidations() 는 Range 메서드이므로 시트 전체 범위에 적용해야 함
+  inputSheet.getRange(1, 1, inputSheet.getMaxRows(), inputSheet.getMaxColumns())
+    .clearDataValidations();
   inputSheet.clear();
 
   // 기본 가이드 및 텍스트 UI 배치 — 검색 영역
