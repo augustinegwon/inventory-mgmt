@@ -13,6 +13,7 @@ Ledger ──(연산)──▶ Inventory ──(참조)──▶ Dashboard
 | `Ledger` | 거래 원장 (append-only, 재고의 단일 진실 공급원) |
 | `Inventory` | Ledger를 연산해 정리한 **정규화 재고 목록** (Category/Item/Location/Serial/Qty) |
 | `Dashboard` | Inventory를 **피벗**한 아이템 × 위치 매트릭스 (표시 계층) |
+| `Opening` | 기초재고 일괄입력 스테이징 (→ Ledger OPENING 거래로 등록) |
 | `Settings` | 마스터 데이터 |
 
 ## 이름 있는 범위 (Named Ranges)
@@ -71,6 +72,15 @@ Ledger ──(연산)──▶ Inventory ──(참조)──▶ Dashboard
   - 거래 제출(`submitTransaction`) 때마다 자동 재계산
   - 수동: 메뉴 📦 Inventory → **재고 새로고침 (Rebuild Inventory)**
 - Freeze: 1행
+
+## Opening — 기초재고 일괄입력
+파일 사용 전, 초기 실사 재고를 한 번에 넣기 위한 스테이징 시트.
+- 입력 열(3행부터): `Item`(드롭다운) / `Location`(드롭다운) / `Serial Number` / `Quantity`
+- 메뉴 📦 Inventory → **기초재고 일괄등록 (Import Opening)** 실행 시:
+  - 각 행 검증(품목 존재·수량 양의 정수·시리얼 품목은 시리얼 필수·중복 차단)
+  - 통과 시 Ledger에 `Type=ADD, From=EXTERNAL (OPENING), To=위치, Worker=OPENING, Note=Opening balance` 로 기록
+  - 하나라도 오류면 **전체 미기록**(원자적), 성공 시 스테이징 표는 비워짐 + Inventory 재계산
+- 초기재고는 이렇게 **Ledger 단일 원천**으로 관리되며, `From = EXTERNAL (OPENING)` 으로 필터하면 초기 실사 목록만 조회 가능
 
 ## Dashboard — 표시 계층 (Inventory 피벗)
 - `A2` `Item` / `B2` `Total` / `C2~` 버킷 헤더

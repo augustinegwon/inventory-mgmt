@@ -7,6 +7,7 @@
  *   - Ledger      : 거래 원장 (append-only, 재고의 단일 진실 공급원)
  *   - Inventory   : Ledger 연산 결과(정규화 재고 목록) — 스크립트가 기록
  *   - Dashboard   : Inventory 를 피벗한 아이템 × 위치 매트릭스
+ *   - Opening     : 기초재고 일괄입력 스테이징 (→ Ledger OPENING 거래로 등록)
  *   - Settings    : 마스터 데이터 (Category/Item/Serial여부, Location, Tour, USER)
  *
  * 이름 있는 범위(Named Ranges):
@@ -25,6 +26,7 @@ const LEDGER_COL = {
 
 const EXTERNAL_VENDOR = 'EXTERNAL (VENDOR)';
 const EXTERNAL_SCRAP = 'EXTERNAL (SCRAP)';
+const EXTERNAL_OPENING = 'EXTERNAL (OPENING)'; // 기초재고 출처 (초기 실사)
 
 /**
  * 필수 시트를 가져오되, 없으면 실제 시트 목록과 함께 알림을 띄우고 null 을 반환한다.
@@ -54,6 +56,7 @@ function onOpen() {
     .addSeparator()
     .addItem('🚀 전체 초기화 (Initialize)', 'initializeSystem')
     .addItem('입력폼 재설정 (Setup Form)', 'setupInputSheet')
+    .addItem('기초재고 일괄등록 (Import Opening)', 'importOpeningStock')
     .addItem('재고 새로고침 (Rebuild Inventory)', 'rebuildInv')
     .addItem('편집 트리거 등록 (Install Trigger)', 'createTriggers')
     .addItem('시리얼 텍스트 변환 (Migrate Serials)', 'migrateSerialsToText')
@@ -84,6 +87,9 @@ function initializeSystem() {
   // 3) 이름범위 — 수식이 참조하므로 시트/데이터 준비 후 먼저 정의
   defineNamedRanges_(ss, settings);
 
+  // 3-1) Opening — 기초재고 일괄입력용 스테이징 시트
+  setupOpeningSheet_(ss);
+
   // 4) Inventory — Ledger를 연산해 "정규화된 재고 목록"으로 정리하는 데이터 계층
   getOrCreateSheet_(ss, 'Inventory');
   rebuildInv_(ss);
@@ -101,7 +107,7 @@ function initializeSystem() {
   SpreadsheetApp.flush();
   ui.alert(
     '✅ 초기화 완료!\n\n' +
-    'Transaction / Ledger / Inventory / Dashboard / Settings 시트와 이름범위(LIST_*)를 생성했습니다.\n\n' +
+    'Transaction / Ledger / Inventory / Dashboard / Opening / Settings 시트와 이름범위(LIST_*)를 생성했습니다.\n\n' +
     '다음 단계: 메뉴 → 📦 Inventory → "편집 트리거 등록"을 한 번 실행해 주세요.'
   );
 }
@@ -298,6 +304,141 @@ function addInvQty_(map, catOf, item, loc, serial, delta) {
     map[key] = { cat: catOf[item] || '', item: item, loc: loc, serial: serial, qty: 0 };
   }
   map[key].qty += delta;
+}
+
+/**
+ * Opening — 기초재고 일괄입력용 스테이징 시트 (헤더 + 드롭다운). 기존 입력 데이터는 보존.
+ * 여기에 채운 행은 importOpeningStock() 이 Ledger의 OPENING 거래로 등록한다.
+ */
+function setupOpeningSheet_(ss) {
+  const settings = ss.getSheetByName('Settings');
+  const sheet = getOrCreateSheet_(ss, 'Opening');
+
+  sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).clearDataValidations();
+  sheet.getRange('A1').setValue('📥 Opening Stock — 기초재고 일괄입력').setFontWeight('bold');
+  sheet.getRange('A2').setValue('Item').setFontWeight('bold');
+  sheet.getRange('B2').setValue('Location').setFontWeight('bold');
+  sheet.getRange('C2').setValue('Serial Number').setFontWeight('bold');
+  sheet.getRange('D2').setValue('Quantity').setFontWeight('bold');
+  sheet.getRange('F2').setValue('① 행을 채우고  ②  📦 Inventory → 기초재고 일괄등록  실행 (등록되면 이 표는 비워집니다)');
+  sheet.getRange('C:C').setNumberFormat('@'); // 시리얼 텍스트 고정
+  sheet.setFrozenRows(2);
+
+  if (settings) {
+    const itemRule = SpreadsheetApp.newDataValidation()
+      .requireValueInRange(settings.getRange('B2:B'), true).setAllowInvalid(false).build();
+    const locRule = SpreadsheetApp.newDataValidation()
+      .requireValueInRange(settings.getRange('E2:F'), true).setAllowInvalid(false).build();
+    sheet.getRange('A3:A').setDataValidation(itemRule);
+    sheet.getRange('B3:B').setDataValidation(locRule);
+  }
+}
+
+/**
+ * [메뉴] Opening 시트의 행들을 검증해 Ledger에 기초재고(OPENING) 거래로 일괄 등록한다.
+ * - Type=ADD, From=EXTERNAL (OPENING), To=입력 위치 → 기존 재고 로직에 그대로 반영
+ * - 전량 검증 통과해야만 기록(원자적). 등록 후 스테이징 표는 비우고 Inventory 재계산.
+ */
+function importOpeningStock() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const opening = ss.getSheetByName('Opening');
+  const ledger = getRequiredSheet_(ss, 'Ledger');
+  if (!ledger) return;
+  const settings = getRequiredSheet_(ss, 'Settings');
+  if (!settings) return;
+  if (!opening) {
+    ui.alert('❌ Opening 시트가 없습니다. 먼저 "전체 초기화"를 실행해 주세요.');
+    return;
+  }
+
+  const last = opening.getLastRow();
+  if (last < 3) {
+    ui.alert('ℹ️ 입력된 기초재고가 없습니다. (3행부터 채워주세요)');
+    return;
+  }
+  const data = opening.getRange(3, 1, last - 2, 4).getValues(); // Item, Location, Serial, Qty
+
+  // Settings 맵 (품목 → Category / 시리얼관리여부)
+  const catOf = {};
+  const serOf = {};
+  const sLast = settings.getLastRow();
+  if (sLast >= 2) {
+    const sv = settings.getRange(2, 1, sLast - 1, 3).getValues();
+    for (let i = 0; i < sv.length; i++) {
+      if (sv[i][1] !== '' && sv[i][1] != null) {
+        catOf[sv[i][1]] = sv[i][0];
+        serOf[sv[i][1]] = String(sv[i][2]).toUpperCase() === 'YES';
+      }
+    }
+  }
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+
+    const ledgerRows = getLedgerRows_(ledger);
+    const toWrite = [];
+    const errors = [];
+    const seen = {}; // 이번 배치 내 시리얼 중복 방지
+
+    for (let i = 0; i < data.length; i++) {
+      const rowNum = i + 3;
+      const item = data[i][0];
+      const loc = data[i][1];
+      let serial = data[i][2];
+      const qty = Number(data[i][3]);
+
+      // 완전 빈 행은 건너뜀
+      if ((item === '' || item == null) && (loc === '' || loc == null) &&
+          (serial === '' || serial == null) && (data[i][3] === '' || data[i][3] == null)) {
+        continue;
+      }
+      if (!item || !loc) { errors.push(rowNum + '행: Item 과 Location 은 필수'); continue; }
+      if (!(qty > 0) || Math.floor(qty) !== qty) { errors.push(rowNum + '행: Quantity 는 0보다 큰 정수'); continue; }
+      if (!(item in catOf)) { errors.push(rowNum + '행: 마스터에 없는 품목 "' + item + '"'); continue; }
+
+      if (serOf[item]) { // 시리얼 관리 품목
+        serial = (serial === '' || serial == null) ? '' : String(serial).trim().toUpperCase();
+        if (!serial) { errors.push(rowNum + '행: 시리얼 관리 품목은 Serial 필수'); continue; }
+        if (qty !== 1) { errors.push(rowNum + '행: 시리얼 관리 품목 수량은 1'); continue; }
+        const dupKey = item + '|' + serial;
+        if (seen[dupKey] || serialInStock_(ledgerRows, item, serial) > 0) {
+          errors.push(rowNum + '행: 시리얼 "' + serial + '" 중복(이미 재고/중복 입력)');
+          continue;
+        }
+        seen[dupKey] = true;
+      } else {
+        serial = 'N/A';
+      }
+
+      toWrite.push([new Date(), 'ADD', catOf[item], item, serial,
+                    EXTERNAL_OPENING, loc, qty, 'OPENING', 'Opening balance']);
+    }
+
+    if (errors.length > 0) {
+      ui.alert('❌ 등록 중단 (기록 안 함). 아래를 고쳐주세요:\n\n' + errors.join('\n'));
+      return;
+    }
+    if (toWrite.length === 0) {
+      ui.alert('ℹ️ 등록할 유효한 행이 없습니다.');
+      return;
+    }
+
+    const start = ledger.getLastRow() + 1;
+    ledger.getRange(start, 1, toWrite.length, 10).setValues(toWrite);
+    ledger.getRange(start, LEDGER_COL.SERIAL + 1, toWrite.length, 1).setNumberFormat('@');
+
+    opening.getRange(3, 1, last - 2, 4).clearContent(); // 스테이징 비우기
+    rebuildInv_(ss);
+    SpreadsheetApp.flush();
+    ui.alert('✅ 기초재고 ' + toWrite.length + '건을 Ledger에 등록했습니다.');
+
+  } catch (error) {
+    ui.alert('❌ 오류: ' + error.toString());
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /**
