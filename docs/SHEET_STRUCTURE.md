@@ -11,8 +11,8 @@ Ledger ──(연산)──▶ INV ──(참조)──▶ Dashboard
 |---|---|
 | `Input_Transaction` | 입력 폼 UI |
 | `Ledger` | 거래 원장 (append-only, 재고의 단일 진실 공급원) |
-| `INV` | Ledger를 연산해 정리한 재고 데이터 계층 (아이템 × 위치 매트릭스) |
-| `Dashboard` | INV를 반영하는 표시 계층 (미러링, 서식/차트 커스터마이즈용) |
+| `INV` | Ledger를 연산해 정리한 **정규화 재고 목록** (Category/Item/Location/Serial/Qty) |
+| `Dashboard` | INV를 **피벗**한 아이템 × 위치 매트릭스 (표시 계층) |
 | `Settings` | 마스터 데이터 |
 
 ## 이름 있는 범위 (Named Ranges)
@@ -61,21 +61,27 @@ Ledger ──(연산)──▶ INV ──(참조)──▶ Dashboard
 - `Z1` 검색 Item 후보(Category로 필터):
   `=IFERROR(IF(C3="",FILTER(LIST_ITEM,LIST_ITEM<>""),FILTER(LIST_ITEM,LIST_CATEGORY=C3,LIST_ITEM<>"")),"")`
 
-## INV — 재고 데이터 계층 (Ledger 연산)
-- `A2` `Item` / `B2` `Total` / `C2~` 버킷 헤더
-- `A3` 아래로 아이템 목록: `=FILTER(LIST_ITEM, LIST_ITEM<>"")`
-- `B3` 품목별 **총 수량**(spill): `BYROW(items, LAMBDA(i, SUMIFS(H,D=i,B="ADD") - SUMIFS(H,D=i,B="REMOVE")))` — MOVE는 총량 불변이라 ADD−REMOVE = 매트릭스 행 합계
-- `C2` 가로 헤더(버킷): `=IFERROR(TRANSPOSE(TOCOL(LIST_BUCKET,1,TRUE)),"")`
-- `C3` 매트릭스 본문(spill): `MAKEARRAY(아이템수, 버킷수, LAMBDA(r,c, SUMIFS(To)-SUMIFS(From)))`
-- Freeze: 2행 + **2열(A Item, B Total)**
+## INV — 정규화된 재고 목록 (스크립트가 Ledger 연산 후 기록)
+헤더: `Category | Item | Location | Serial Number | Quantity` (A1:E1), 데이터는 2행부터.
+- 한 행 = 하나의 재고 항목, **수량 > 0** 인 것만
+  - 시리얼 관리 품목: **시리얼별**로 한 행 (수량 보통 1)
+  - 비시리얼 품목: **(품목, 위치)별**로 한 행, Serial 칸 공백
+- 정렬: Category → Item → Location → Serial
+- **라이브 수식이 아니라 스크립트 값**: `rebuildInv_()`가 계산해 기록.
+  - 거래 제출(`submitTransaction`) 때마다 자동 재계산
+  - 수동: 메뉴 📦 Inventory → **INV 새로고침 (Rebuild INV)**
+- Freeze: 1행
 
-## Dashboard — 표시 계층 (INV 반영)
-- `A1` 제목(정적), `A2` INV 미러링: `=ARRAYFORMULA(IF(INV!$A$2:$AZ$300="", "", INV!$A$2:$AZ$300))`
-- 계산은 INV에서만 수행. Dashboard는 참조만 하므로 서식·차트를 자유롭게 얹어도 계산부에 영향 없음
-- Freeze: 2행 + 2열
+## Dashboard — 표시 계층 (INV 피벗)
+- `A2` `Item` / `B2` `Total` / `C2~` 버킷 헤더
+- `A3` 아이템 목록: `=FILTER(LIST_ITEM, LIST_ITEM<>"")`
+- `B3` 총 수량: `BYROW(items, LAMBDA(i, SUMIFS(INV!E, INV!B, i)))`
+- `C3` 매트릭스: `MAKEARRAY(..., LAMBDA(r,c, SUMIFS(INV!E, INV!B, item, INV!C, bucket)))`
+- 계산 원천은 **Ledger 가 아니라 INV** (Ledger ▶ INV ▶ Dashboard)
+- Freeze: 2행 + 2열(A Item, B Total)
 
 ## ✅ 스크립트 파일 구성
-- `Setup.gs` — 공용 상수 + `onOpen`(메뉴), `initializeSystem`(빈 시트 부트스트랩), `setupInputSheet`, `createTriggers`, `migrateSerialsToText`, 시트 헬퍼(`getRequiredSheet_`/`getOrCreateSheet_`/`setupLedgerSheet_`/`setupSettingsSheet_`/`defineNamedRanges_`/`setupInvSheet_`/`setupDashboardSheet_`)
+- `Setup.gs` — 공용 상수 + `onOpen`(메뉴), `initializeSystem`(빈 시트 부트스트랩), `setupInputSheet`, `rebuildInv`/`rebuildInv_`(INV 재계산), `createTriggers`, `migrateSerialsToText`, 시트 헬퍼(`getRequiredSheet_`/`getOrCreateSheet_`/`setupLedgerSheet_`/`setupSettingsSheet_`/`defineNamedRanges_`/`setupDashboardSheet_`/`addInvQty_`)
 - `Transaction.gs` — `updateDynamicUI`, `submitTransaction` + 재고 계산 헬퍼
 
 ## 🚀 빈 스프레드시트에서 처음 세팅하는 순서

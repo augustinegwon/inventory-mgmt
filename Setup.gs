@@ -53,6 +53,7 @@ function onOpen() {
     .addSeparator()
     .addItem('🚀 전체 초기화 (Initialize)', 'initializeSystem')
     .addItem('입력폼 재설정 (Setup Form)', 'setupInputSheet')
+    .addItem('INV 새로고침 (Rebuild INV)', 'rebuildInv')
     .addItem('편집 트리거 등록 (Install Trigger)', 'createTriggers')
     .addItem('시리얼 텍스트 변환 (Migrate Serials)', 'migrateSerialsToText')
     .addToUi();
@@ -78,11 +79,11 @@ function initializeSystem() {
   // 3) 이름범위 — 수식이 참조하므로 시트/데이터 준비 후 먼저 정의
   defineNamedRanges_(ss, settings);
 
-  // 4) INV — Ledger를 연산해 재고를 정리하는 데이터 계층
-  const inv = getOrCreateSheet_(ss, 'INV');
-  setupInvSheet_(inv);
+  // 4) INV — Ledger를 연산해 "정규화된 재고 목록"으로 정리하는 데이터 계층
+  getOrCreateSheet_(ss, 'INV');
+  rebuildInv_(ss);
 
-  // 5) 대시보드 — INV 내용을 반영하는 표시 계층
+  // 5) 대시보드 — INV를 피벗(SUMIFS)해서 보여주는 표시 계층
   const dashboard = getOrCreateSheet_(ss, 'Dashboard');
   setupDashboardSheet_(dashboard);
 
@@ -194,48 +195,126 @@ function defineNamedRanges_(ss, settings) {
 }
 
 /**
- * INV — Ledger를 연산해 "아이템 × 위치" 재고를 정리하는 데이터 계층.
- * (기존에 Dashboard가 직접 계산하던 수식을 이 시트로 이동)
+ * [메뉴] INV 시트를 현재 Ledger 기준으로 다시 계산한다.
  */
-function setupInvSheet_(sheet) {
-  sheet.getRange('A1').setValue('📦 INV (Ledger 연산 결과)').setFontWeight('bold');
+function rebuildInv() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  if (!ss.getSheetByName('Ledger') || !ss.getSheetByName('Settings')) {
+    ui.alert('❌ 에러: Ledger 또는 Settings 시트를 찾을 수 없습니다. 먼저 "전체 초기화"를 실행해 주세요.');
+    return;
+  }
+  const n = rebuildInv_(ss);
+  SpreadsheetApp.flush();
+  ui.alert('✅ INV 새로고침 완료: 재고 항목 ' + n + '건을 정리했습니다.');
+}
+
+/**
+ * INV — Ledger를 연산해 "정규화된 재고 목록"으로 정리하는 데이터 계층.
+ * 한 행 = (Category, Item, Location, Serial, Quantity), 재고 수량이 0보다 큰 항목만.
+ *   - 시리얼 관리 품목: 시리얼별로 한 행 (수량 보통 1)
+ *   - 비시리얼 품목: (품목, 위치)별로 한 행, Serial 칸은 공백
+ * 반환값: 기록한 재고 행 수.
+ */
+function rebuildInv_(ss) {
+  const ledger = ss.getSheetByName('Ledger');
+  const settings = ss.getSheetByName('Settings');
+  const inv = getOrCreateSheet_(ss, 'INV');
+  if (!ledger || !settings) return 0;
+
+  // Settings 에서 품목 → Category / 시리얼관리여부 맵 구성
+  const catOf = {};
+  const serialOf = {};
+  const sLast = settings.getLastRow();
+  if (sLast >= 2) {
+    const sv = settings.getRange(2, 1, sLast - 1, 3).getValues(); // A:C
+    for (let i = 0; i < sv.length; i++) {
+      const item = sv[i][1];
+      if (item !== '' && item != null) {
+        catOf[item] = sv[i][0];
+        serialOf[item] = String(sv[i][2]).toUpperCase() === 'YES';
+      }
+    }
+  }
+
+  // Ledger 를 훑어 (품목|위치|시리얼) 별 순재고 집계
+  const rows = getLedgerRows_(ledger);
+  const map = {};
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const item = r[LEDGER_COL.ITEM];
+    const qty = Number(r[LEDGER_COL.QTY]) || 0;
+    const isSer = !!serialOf[item];
+    const serial = isSer ? normSerial_(r[LEDGER_COL.SERIAL]) : '';
+    const to = r[LEDGER_COL.TO];
+    const from = r[LEDGER_COL.FROM];
+    if (!isExternal_(to)) addInvQty_(map, catOf, item, to, serial, qty);
+    if (!isExternal_(from)) addInvQty_(map, catOf, item, from, serial, -qty);
+  }
+
+  // 재고 > 0 인 항목만 출력, Category→Item→Location→Serial 순 정렬
+  const out = [];
+  const keys = Object.keys(map);
+  for (let i = 0; i < keys.length; i++) {
+    const e = map[keys[i]];
+    if (e.qty > 0) out.push([e.cat, e.item, e.loc, e.serial, e.qty]);
+  }
+  out.sort(function (a, b) {
+    return String(a[0]).localeCompare(String(b[0])) ||
+           String(a[1]).localeCompare(String(b[1])) ||
+           String(a[2]).localeCompare(String(b[2])) ||
+           String(a[3]).localeCompare(String(b[3]));
+  });
+
+  // INV 시트에 기록 (헤더 + 데이터)
+  inv.clearContents();
+  const headers = ['Category', 'Item', 'Location', 'Serial Number', 'Quantity'];
+  inv.getRange(1, 1, 1, 5).setValues([headers]).setFontWeight('bold');
+  inv.getRange('D:D').setNumberFormat('@'); // 시리얼 텍스트 고정
+  if (out.length > 0) {
+    inv.getRange(2, 1, out.length, 5).setValues(out);
+  }
+  inv.setFrozenRows(1);
+  return out.length;
+}
+
+/** rebuildInv_ 내부: (품목|위치|시리얼) 키에 수량 누적 */
+function addInvQty_(map, catOf, item, loc, serial, delta) {
+  const key = item + ' ' + loc + ' ' + serial;
+  if (!map[key]) {
+    map[key] = { cat: catOf[item] || '', item: item, loc: loc, serial: serial, qty: 0 };
+  }
+  map[key].qty += delta;
+}
+
+/**
+ * Dashboard — INV(정규화 재고 목록)를 SUMIFS 로 피벗해 "아이템 × 위치" 매트릭스로 보여주는 표시 계층.
+ * 계산 원천은 Ledger 가 아니라 INV. (Ledger ▶ INV ▶ Dashboard 파이프라인)
+ */
+function setupDashboardSheet_(sheet) {
+  sheet.getRange('A1').setValue('📊 [Inventory Dashboard]').setFontWeight('bold');
   sheet.getRange('A2').setValue('Item').setFontWeight('bold');
   sheet.getRange('B2').setValue('Total').setFontWeight('bold');
 
   // A3: 아이템 목록(세로 spill)
   sheet.getRange('A3').setFormula('=FILTER(LIST_ITEM, LIST_ITEM<>"")');
 
-  // B3: 아이템별 총 수량 (ADD 합계 - REMOVE 합계; MOVE는 총량 불변)
+  // B3: 아이템별 총 수량 = INV 수량 합계
   sheet.getRange('B3').setFormula(
     '=IFERROR(LET(items, FILTER(LIST_ITEM, LIST_ITEM<>""), ' +
-    'BYROW(items, LAMBDA(i, SUMIFS(Ledger!$H:$H, Ledger!$D:$D, i, Ledger!$B:$B, "ADD") ' +
-    '- SUMIFS(Ledger!$H:$H, Ledger!$D:$D, i, Ledger!$B:$B, "REMOVE")))), "")'
+    'BYROW(items, LAMBDA(i, SUMIFS(INV!$E:$E, INV!$B:$B, i)))), "")'
   );
 
   // C2: 버킷 헤더(가로 spill)
   sheet.getRange('C2').setFormula('=IFERROR(TRANSPOSE(TOCOL(LIST_BUCKET, 1, TRUE)), "")');
 
-  // C3: 아이템 × 버킷 재고 매트릭스(2차원 spill)
+  // C3: 아이템 × 버킷 매트릭스 = INV 를 (Item, Location) 으로 피벗
   sheet.getRange('C3').setFormula(
     '=IFERROR(LET(items, FILTER(LIST_ITEM, LIST_ITEM<>""), buckets, TOCOL(LIST_BUCKET, 1, TRUE), ' +
-    'MAKEARRAY(ROWS(items), ROWS(buckets), LAMBDA(r, c, LET(i, INDEX(items, r), b, INDEX(buckets, c), ' +
-    'SUMIFS(Ledger!$H:$H, Ledger!$D:$D, i, Ledger!$G:$G, b) - SUMIFS(Ledger!$H:$H, Ledger!$D:$D, i, Ledger!$F:$F, b))))), "")'
+    'MAKEARRAY(ROWS(items), ROWS(buckets), LAMBDA(r, c, ' +
+    'SUMIFS(INV!$E:$E, INV!$B:$B, INDEX(items, r), INV!$C:$C, INDEX(buckets, c))))), "")'
   );
 
-  sheet.setFrozenRows(2);
-  sheet.setFrozenColumns(2); // A(Item) + B(Total) 고정
-}
-
-/**
- * Dashboard — INV 시트 내용을 그대로 반영하는 표시 계층.
- * (계산은 하지 않고 INV를 미러링. 이후 서식/차트 등은 이 시트에서 자유롭게 커스터마이즈)
- */
-function setupDashboardSheet_(sheet) {
-  sheet.getRange('A1').setValue('📊 [Inventory Dashboard]').setFontWeight('bold');
-  // A2 앵커: INV의 헤더(2행)부터 아래·오른쪽 전체를 미러링. 빈 셀은 공백으로 유지.
-  sheet.getRange('A2').setFormula(
-    '=ARRAYFORMULA(IF(INV!$A$2:$AZ$300="", "", INV!$A$2:$AZ$300))'
-  );
   sheet.setFrozenRows(2);
   sheet.setFrozenColumns(2); // A(Item) + B(Total) 고정
 }

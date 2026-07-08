@@ -225,6 +225,9 @@ function submitTransaction() {
     inputSheet.getRange('F8').setValue(1);  // 수량 초기화
     inputSheet.getRange('F10').setValue(''); // Note 초기화
 
+    // 원장 기록 후 INV(정규화 재고 목록) 재계산 → Dashboard 는 INV 를 참조하므로 자동 갱신
+    rebuildInv_(ss);
+
     SpreadsheetApp.flush();
     ui.alert('✅ 성공: 트랜잭션이 원장(Ledger)에 정상적으로 기록되었습니다.');
 
