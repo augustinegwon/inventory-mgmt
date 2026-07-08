@@ -11,6 +11,8 @@
  * (Input_Transaction 시트의 '수정 시(onEdit)' 트리거로 연결되어야 동작 — Setup.gs 의 createTriggers 참고)
  */
 function updateDynamicUI(e) {
+  // 이벤트 없이(편집기에서 직접) 호출되면 e.range 접근에서 크래시하므로 방어
+  if (!e || !e.range) return;
   const range = e.range;
   const sheet = range.getSheet();
   if (sheet.getName() !== 'Input_Transaction') return;
