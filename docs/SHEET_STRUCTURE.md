@@ -1,7 +1,7 @@
 # 스프레드시트 구조 (현재 배포본 기준)
 
 `260707_Inventory.xlsx`에서 추출한 **실제 시트 상태**입니다.
-`Code.gs`의 `setupInputSheet()`는 이보다 오래된 버전이라 서로 다릅니다(아래 ⚠️ 참고).
+스크립트는 `Setup.gs` / `Transaction.gs` 두 파일로 구성됩니다(아래 참고).
 
 ## 시트 목록
 | 시트 | 역할 |
@@ -62,7 +62,9 @@
 - `B2` 가로 헤더(버킷): `=IFERROR(TRANSPOSE(TOCOL(LIST_BUCKET,1,TRUE)),"")`
 - `B3` 매트릭스 본문(spill): `MAKEARRAY(아이템수, 버킷수, LAMBDA(r,c, SUMIFS(To)-SUMIFS(From)))`
 
-## ⚠️ Code.gs 와 실제 시트의 불일치
-`Code.gs`의 `setupInputSheet()`는 **구버전 헬퍼 수식**(단순 FILTER, `Settings!$E$2:$E`만 참조)을 씁니다.
-지금 실행하면 `inputSheet.clear()`로 시트를 지우고 위의 개선된 LET/LAMBDA 수식을 **구버전으로 덮어써서** 검색 UI·투어 버킷 기능이 깨집니다.
-→ 재설정이 필요하면 이 함수를 현재 배포 수식에 맞춰 갱신한 뒤 실행해야 합니다.
+## ✅ 스크립트 파일 구성
+- `Setup.gs` — 공용 상수 + `onOpen`(메뉴), `setupInputSheet`, `createTriggers`, `migrateSerialsToText`
+- `Transaction.gs` — `updateDynamicUI`, `submitTransaction` + 재고 계산 헬퍼
+
+> (해결됨) 과거 `setupInputSheet()`는 구버전 헬퍼 수식(단순 FILTER)을 써서 재실행 시 검색 UI·투어 버킷이 깨질 위험이 있었으나,
+> 현재 `Setup.gs`의 `setupInputSheet()`는 위에 정리된 **현재 배포 수식(LET/LAMBDA, LIST_BUCKET)**을 그대로 재현하도록 갱신되었습니다.
