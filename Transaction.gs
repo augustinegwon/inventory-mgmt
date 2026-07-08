@@ -88,10 +88,15 @@ function updateDynamicUI(e) {
  */
 function submitTransaction() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const inputSheet = ss.getSheetByName('Input_Transaction');
-  const ledgerSheet = ss.getSheetByName('Ledger');
-  const settingsSheet = ss.getSheetByName('Settings');
   const ui = SpreadsheetApp.getUi();
+
+  // 필수 시트 확인 (없으면 명확한 안내 후 중단)
+  const inputSheet = getRequiredSheet_(ss, 'Input_Transaction');
+  if (!inputSheet) return;
+  const ledgerSheet = getRequiredSheet_(ss, 'Ledger');
+  if (!ledgerSheet) return;
+  const settingsSheet = getRequiredSheet_(ss, 'Settings');
+  if (!settingsSheet) return;
 
   // 입력 필드 값 가져오기
   const type = inputSheet.getRange('F3').getValue();
@@ -290,6 +295,7 @@ function serialInStock_(rows, item, serial) {
 /** Settings 에서 아이템의 시리얼 관리 여부('YES'/'NO') 조회 */
 function isSerialManaged_(ss, itemName) {
   const settingsSheet = ss.getSheetByName('Settings');
+  if (!settingsSheet) return 'NO'; // Settings 시트가 없으면 조용히 기본값
   const last = settingsSheet.getLastRow();
   if (last < 2) return 'NO';
   const mapping = settingsSheet.getRange(2, 2, last - 1, 2).getValues(); // B:C

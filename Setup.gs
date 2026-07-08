@@ -26,6 +26,23 @@ const EXTERNAL_VENDOR = 'EXTERNAL (VENDOR)';
 const EXTERNAL_SCRAP = 'EXTERNAL (SCRAP)';
 
 /**
+ * 필수 시트를 가져오되, 없으면 실제 시트 목록과 함께 알림을 띄우고 null 을 반환한다.
+ * (호출부에서 null 이면 즉시 return 하여 크래시 대신 명확한 안내로 중단)
+ */
+function getRequiredSheet_(ss, name) {
+  const sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    const names = ss.getSheets().map(function (s) { return s.getName(); }).join(', ');
+    SpreadsheetApp.getUi().alert(
+      '❌ 에러: "' + name + '" 시트를 찾을 수 없습니다.\n' +
+      '시트 이름(대소문자·공백 포함)을 확인해 주세요.\n\n' +
+      '현재 시트 목록: ' + names
+    );
+  }
+  return sheet;
+}
+
+/**
  * 스프레드시트를 열 때 상단에 '📦 Inventory' 메뉴를 추가한다.
  * (설치/유지보수 함수를 편집기 없이 시트에서 바로 실행할 수 있게 해줌)
  */
@@ -46,6 +63,11 @@ function onOpen() {
  */
 function setupInputSheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // 필수 시트 존재 여부를 먼저 확인 (없으면 아무것도 건드리지 않고 중단)
+  const settingsSheet = getRequiredSheet_(ss, 'Settings');
+  if (!settingsSheet) return;
+
   let inputSheet = ss.getSheetByName('Input_Transaction');
   if (!inputSheet) {
     inputSheet = ss.insertSheet('Input_Transaction');
@@ -122,7 +144,7 @@ function setupInputSheet() {
     .build();
 
   const categoryRule = SpreadsheetApp.newDataValidation()
-    .requireValueInRange(ss.getSheetByName('Settings').getRange('A2:A'), true)
+    .requireValueInRange(settingsSheet.getRange('A2:A'), true)
     .setAllowInvalid(false)
     .build();
 
@@ -138,7 +160,7 @@ function setupInputSheet() {
 
   // USER 드롭다운 (Settings!H 마스터). 신규 사용자도 허용하도록 경고만(allowInvalid=true)
   const userRule = SpreadsheetApp.newDataValidation()
-    .requireValueInRange(ss.getSheetByName('Settings').getRange('H2:H'), true)
+    .requireValueInRange(settingsSheet.getRange('H2:H'), true)
     .setAllowInvalid(true)
     .build();
 
@@ -193,8 +215,9 @@ function createTriggers() {
  */
 function migrateSerialsToText() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ledgerSheet = ss.getSheetByName('Ledger');
   const ui = SpreadsheetApp.getUi();
+  const ledgerSheet = getRequiredSheet_(ss, 'Ledger');
+  if (!ledgerSheet) return;
   const last = ledgerSheet.getLastRow();
   if (last < 2) {
     ui.alert('ℹ️ 원장에 데이터가 없습니다.');
