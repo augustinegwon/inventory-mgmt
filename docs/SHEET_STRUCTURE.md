@@ -5,14 +5,14 @@
 
 ## 시트 목록 / 데이터 흐름
 ```
-Ledger ──(연산)──▶ INV ──(참조)──▶ Dashboard
+Ledger ──(연산)──▶ Inventory ──(참조)──▶ Dashboard
 ```
 | 시트 | 역할 |
 |---|---|
-| `Input_Transaction` | 입력 폼 UI |
+| `Transaction` | 입력 폼 UI |
 | `Ledger` | 거래 원장 (append-only, 재고의 단일 진실 공급원) |
-| `INV` | Ledger를 연산해 정리한 **정규화 재고 목록** (Category/Item/Location/Serial/Qty) |
-| `Dashboard` | INV를 **피벗**한 아이템 × 위치 매트릭스 (표시 계층) |
+| `Inventory` | Ledger를 연산해 정리한 **정규화 재고 목록** (Category/Item/Location/Serial/Qty) |
+| `Dashboard` | Inventory를 **피벗**한 아이템 × 위치 매트릭스 (표시 계층) |
 | `Settings` | 마스터 데이터 |
 
 ## 이름 있는 범위 (Named Ranges)
@@ -35,7 +35,7 @@ Ledger ──(연산)──▶ INV ──(참조)──▶ Dashboard
 - E: Location(물리 창고) / F: Tour Package(투어)
 - H: USER(이메일)
 
-## Input_Transaction — 실제 셀/수식
+## Transaction — 실제 셀/수식
 검색 영역(B~C)과 트랜잭션 폼(E~F), 그리고 숨김 헬퍼 열(W/X/Y/Z).
 
 | 셀 | 내용 |
@@ -61,7 +61,7 @@ Ledger ──(연산)──▶ INV ──(참조)──▶ Dashboard
 - `Z1` 검색 Item 후보(Category로 필터):
   `=IFERROR(IF(C3="",FILTER(LIST_ITEM,LIST_ITEM<>""),FILTER(LIST_ITEM,LIST_CATEGORY=C3,LIST_ITEM<>"")),"")`
 
-## INV — 정규화된 재고 목록 (스크립트가 Ledger 연산 후 기록)
+## Inventory — 정규화된 재고 목록 (스크립트가 Ledger 연산 후 기록)
 헤더: `Category | Item | Location | Serial Number | Quantity` (A1:E1), 데이터는 2행부터.
 - 한 행 = 하나의 재고 항목, **수량 > 0** 인 것만
   - 시리얼 관리 품목: **시리얼별**로 한 행 (수량 보통 1)
@@ -69,25 +69,25 @@ Ledger ──(연산)──▶ INV ──(참조)──▶ Dashboard
 - 정렬: Category → Item → Location → Serial
 - **라이브 수식이 아니라 스크립트 값**: `rebuildInv_()`가 계산해 기록.
   - 거래 제출(`submitTransaction`) 때마다 자동 재계산
-  - 수동: 메뉴 📦 Inventory → **INV 새로고침 (Rebuild INV)**
+  - 수동: 메뉴 📦 Inventory → **재고 새로고침 (Rebuild Inventory)**
 - Freeze: 1행
 
-## Dashboard — 표시 계층 (INV 피벗)
+## Dashboard — 표시 계층 (Inventory 피벗)
 - `A2` `Item` / `B2` `Total` / `C2~` 버킷 헤더
 - `A3` 아이템 목록: `=FILTER(LIST_ITEM, LIST_ITEM<>"")`
-- `B3` 총 수량: `BYROW(items, LAMBDA(i, SUMIFS(INV!E, INV!B, i)))`
-- `C3` 매트릭스: `MAKEARRAY(..., LAMBDA(r,c, SUMIFS(INV!E, INV!B, item, INV!C, bucket)))`
-- 계산 원천은 **Ledger 가 아니라 INV** (Ledger ▶ INV ▶ Dashboard)
+- `B3` 총 수량: `BYROW(items, LAMBDA(i, SUMIFS(Inventory!E, Inventory!B, i)))`
+- `C3` 매트릭스: `MAKEARRAY(..., LAMBDA(r,c, SUMIFS(Inventory!E, Inventory!B, item, Inventory!C, bucket)))`
+- 계산 원천은 **Ledger 가 아니라 Inventory** (Ledger ▶ Inventory ▶ Dashboard)
 - Freeze: 2행 + 2열(A Item, B Total)
 
 ## ✅ 스크립트 파일 구성
-- `Setup.gs` — 공용 상수 + `onOpen`(메뉴), `initializeSystem`(빈 시트 부트스트랩), `setupInputSheet`, `rebuildInv`/`rebuildInv_`(INV 재계산), `createTriggers`, `migrateSerialsToText`, 시트 헬퍼(`getRequiredSheet_`/`getOrCreateSheet_`/`setupLedgerSheet_`/`setupSettingsSheet_`/`defineNamedRanges_`/`setupDashboardSheet_`/`addInvQty_`)
+- `Setup.gs` — 공용 상수 + `onOpen`(메뉴), `initializeSystem`(빈 시트 부트스트랩), `setupInputSheet`, `rebuildInv`/`rebuildInv_`(Inventory 재계산), `createTriggers`, `migrateSerialsToText`, 시트 헬퍼(`getRequiredSheet_`/`getOrCreateSheet_`/`setupLedgerSheet_`/`setupSettingsSheet_`/`defineNamedRanges_`/`setupDashboardSheet_`/`addInvQty_`)
 - `Transaction.gs` — `updateDynamicUI`, `submitTransaction` + 재고 계산 헬퍼
 
 ## 🚀 빈 스프레드시트에서 처음 세팅하는 순서
 1. Apps Script 편집기에 `Setup.gs` / `Transaction.gs` 붙여넣고 저장
 2. 시트 새로고침 → **📦 Inventory → 🚀 전체 초기화 (Initialize)** 실행 (권한 승인)
-   - Ledger/Settings/Dashboard/Input_Transaction 시트 + 헤더 + 마스터 데이터 + 이름범위 + 대시보드 수식 생성, 빈 `Sheet1` 제거
+   - Ledger/Settings/Dashboard/Transaction 시트 + 헤더 + 마스터 데이터 + 이름범위 + 대시보드 수식 생성, 빈 `Sheet1` 제거
 3. **📦 Inventory → 편집 트리거 등록** 실행 (동적 UI 동작에 필요)
 4. 제출 버튼(도형)에 `submitTransaction` 함수 연결 (또는 메뉴의 "트랜잭션 제출" 사용)
 

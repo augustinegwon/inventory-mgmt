@@ -8,18 +8,18 @@
 
 /**
  * 사용자가 Type 이나 Item 을 바꿨을 때 시리얼 번호 및 수량 칸을 제어하는 동적 UI 함수.
- * (Input_Transaction 시트의 '수정 시(onEdit)' 트리거로 연결되어야 동작 — Setup.gs 의 createTriggers 참고)
+ * (Transaction 시트의 '수정 시(onEdit)' 트리거로 연결되어야 동작 — Setup.gs 의 createTriggers 참고)
  */
 function updateDynamicUI(e) {
   // 이벤트 없이(편집기에서 직접) 호출되면 e.range 접근에서 크래시하므로 방어
   if (!e || !e.range) return;
   const range = e.range;
   const sheet = range.getSheet();
-  if (sheet.getName() !== 'Input_Transaction') return;
+  if (sheet.getName() !== 'Transaction') return;
 
   const cellA1 = range.getA1Notation();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const inputSheet = ss.getSheetByName('Input_Transaction');
+  const inputSheet = ss.getSheetByName('Transaction');
 
   // 시리얼(F5) 직접 입력값은 공백 제거 + 대문자로 정규화 (텍스트 유지, 매칭 정합성 보장)
   if (cellA1 === 'F5') {
@@ -91,7 +91,7 @@ function submitTransaction() {
   const ui = SpreadsheetApp.getUi();
 
   // 필수 시트 확인 (없으면 명확한 안내 후 중단)
-  const inputSheet = getRequiredSheet_(ss, 'Input_Transaction');
+  const inputSheet = getRequiredSheet_(ss, 'Transaction');
   if (!inputSheet) return;
   const ledgerSheet = getRequiredSheet_(ss, 'Ledger');
   if (!ledgerSheet) return;
@@ -225,7 +225,7 @@ function submitTransaction() {
     inputSheet.getRange('F8').setValue(1);  // 수량 초기화
     inputSheet.getRange('F10').setValue(''); // Note 초기화
 
-    // 원장 기록 후 INV(정규화 재고 목록) 재계산 → Dashboard 는 INV 를 참조하므로 자동 갱신
+    // 원장 기록 후 Inventory(정규화 재고 목록) 재계산 → Dashboard 는 Inventory 를 참조하므로 자동 갱신
     rebuildInv_(ss);
 
     SpreadsheetApp.flush();

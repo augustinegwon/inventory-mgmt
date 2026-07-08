@@ -3,10 +3,11 @@
  * 설정 / 설치 / 유지보수 함수 + 공용 상수
  *
  * 시트 구성:
- *   - Input_Transaction : 입력 폼 UI (검색 영역 + 트랜잭션 폼 + 헬퍼 열 W/X/Y/Z)
- *   - Ledger            : 거래 원장 (append-only, 재고의 단일 진실 공급원)
- *   - Dashboard         : 아이템 × 위치 재고 매트릭스 (수식으로 자동 계산)
- *   - Settings          : 마스터 데이터 (Category/Item/Serial여부, Location, Tour, USER)
+ *   - Transaction : 입력 폼 UI (검색 영역 + 트랜잭션 폼 + 헬퍼 열 W/X/Y/Z)
+ *   - Ledger      : 거래 원장 (append-only, 재고의 단일 진실 공급원)
+ *   - Inventory   : Ledger 연산 결과(정규화 재고 목록) — 스크립트가 기록
+ *   - Dashboard   : Inventory 를 피벗한 아이템 × 위치 매트릭스
+ *   - Settings    : 마스터 데이터 (Category/Item/Serial여부, Location, Tour, USER)
  *
  * 이름 있는 범위(Named Ranges):
  *   - LIST_CATEGORY = Settings!$A$2:$A$1000
@@ -53,7 +54,7 @@ function onOpen() {
     .addSeparator()
     .addItem('🚀 전체 초기화 (Initialize)', 'initializeSystem')
     .addItem('입력폼 재설정 (Setup Form)', 'setupInputSheet')
-    .addItem('INV 새로고침 (Rebuild INV)', 'rebuildInv')
+    .addItem('재고 새로고침 (Rebuild Inventory)', 'rebuildInv')
     .addItem('편집 트리거 등록 (Install Trigger)', 'createTriggers')
     .addItem('시리얼 텍스트 변환 (Migrate Serials)', 'migrateSerialsToText')
     .addToUi();
@@ -61,12 +62,16 @@ function onOpen() {
 
 /**
  * [빈 스프레드시트용] 시스템 전체를 처음부터 세운다.
- * 필요한 시트 4개(Ledger/Settings/Dashboard/Input_Transaction), 헤더, 마스터 시딩,
- * 이름범위(LIST_*), 대시보드 수식, 입력폼을 순서대로 생성한다.
+ * 필요한 시트 5개(Transaction/Ledger/Inventory/Dashboard/Settings), 헤더, 마스터 시딩,
+ * 이름범위(LIST_*), Inventory/Dashboard 수식, 입력폼을 순서대로 생성한다.
  */
 function initializeSystem() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ui = SpreadsheetApp.getUi();
+
+  // 0) 구버전 시트 이름 정비 (이미 초기화했던 경우 대비)
+  renameSheetIfNeeded_(ss, 'Input_Transaction', 'Transaction');
+  renameSheetIfNeeded_(ss, 'INV', 'Inventory');
 
   // 1) 원장
   const ledger = getOrCreateSheet_(ss, 'Ledger');
@@ -79,11 +84,11 @@ function initializeSystem() {
   // 3) 이름범위 — 수식이 참조하므로 시트/데이터 준비 후 먼저 정의
   defineNamedRanges_(ss, settings);
 
-  // 4) INV — Ledger를 연산해 "정규화된 재고 목록"으로 정리하는 데이터 계층
-  getOrCreateSheet_(ss, 'INV');
+  // 4) Inventory — Ledger를 연산해 "정규화된 재고 목록"으로 정리하는 데이터 계층
+  getOrCreateSheet_(ss, 'Inventory');
   rebuildInv_(ss);
 
-  // 5) 대시보드 — INV를 피벗(SUMIFS)해서 보여주는 표시 계층
+  // 5) 대시보드 — Inventory를 피벗(SUMIFS)해서 보여주는 표시 계층
   const dashboard = getOrCreateSheet_(ss, 'Dashboard');
   setupDashboardSheet_(dashboard);
 
@@ -96,9 +101,17 @@ function initializeSystem() {
   SpreadsheetApp.flush();
   ui.alert(
     '✅ 초기화 완료!\n\n' +
-    'Ledger / Settings / Dashboard / Input_Transaction 시트와 이름범위(LIST_*)를 생성했습니다.\n\n' +
+    'Transaction / Ledger / Inventory / Dashboard / Settings 시트와 이름범위(LIST_*)를 생성했습니다.\n\n' +
     '다음 단계: 메뉴 → 📦 Inventory → "편집 트리거 등록"을 한 번 실행해 주세요.'
   );
+}
+
+/** 구버전 이름의 시트가 있고 새 이름 시트가 없으면 이름을 바꾼다 (데이터 보존) */
+function renameSheetIfNeeded_(ss, oldName, newName) {
+  const oldSheet = ss.getSheetByName(oldName);
+  if (oldSheet && !ss.getSheetByName(newName)) {
+    oldSheet.setName(newName);
+  }
 }
 
 /** 시트를 가져오되 없으면 새로 만든다 */
@@ -195,7 +208,7 @@ function defineNamedRanges_(ss, settings) {
 }
 
 /**
- * [메뉴] INV 시트를 현재 Ledger 기준으로 다시 계산한다.
+ * [메뉴] Inventory 시트를 현재 Ledger 기준으로 다시 계산한다.
  */
 function rebuildInv() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -206,11 +219,11 @@ function rebuildInv() {
   }
   const n = rebuildInv_(ss);
   SpreadsheetApp.flush();
-  ui.alert('✅ INV 새로고침 완료: 재고 항목 ' + n + '건을 정리했습니다.');
+  ui.alert('✅ Inventory 새로고침 완료: 재고 항목 ' + n + '건을 정리했습니다.');
 }
 
 /**
- * INV — Ledger를 연산해 "정규화된 재고 목록"으로 정리하는 데이터 계층.
+ * Inventory — Ledger를 연산해 "정규화된 재고 목록"으로 정리하는 데이터 계층.
  * 한 행 = (Category, Item, Location, Serial, Quantity), 재고 수량이 0보다 큰 항목만.
  *   - 시리얼 관리 품목: 시리얼별로 한 행 (수량 보통 1)
  *   - 비시리얼 품목: (품목, 위치)별로 한 행, Serial 칸은 공백
@@ -219,7 +232,7 @@ function rebuildInv() {
 function rebuildInv_(ss) {
   const ledger = ss.getSheetByName('Ledger');
   const settings = ss.getSheetByName('Settings');
-  const inv = getOrCreateSheet_(ss, 'INV');
+  const inv = getOrCreateSheet_(ss, 'Inventory');
   if (!ledger || !settings) return 0;
 
   // Settings 에서 품목 → Category / 시리얼관리여부 맵 구성
@@ -266,7 +279,7 @@ function rebuildInv_(ss) {
            String(a[3]).localeCompare(String(b[3]));
   });
 
-  // INV 시트에 기록 (헤더 + 데이터)
+  // Inventory 시트에 기록 (헤더 + 데이터)
   inv.clearContents();
   const headers = ['Category', 'Item', 'Location', 'Serial Number', 'Quantity'];
   inv.getRange(1, 1, 1, 5).setValues([headers]).setFontWeight('bold');
@@ -288,8 +301,8 @@ function addInvQty_(map, catOf, item, loc, serial, delta) {
 }
 
 /**
- * Dashboard — INV(정규화 재고 목록)를 SUMIFS 로 피벗해 "아이템 × 위치" 매트릭스로 보여주는 표시 계층.
- * 계산 원천은 Ledger 가 아니라 INV. (Ledger ▶ INV ▶ Dashboard 파이프라인)
+ * Dashboard — Inventory(정규화 재고 목록)를 SUMIFS 로 피벗해 "아이템 × 위치" 매트릭스로 보여주는 표시 계층.
+ * 계산 원천은 Ledger 가 아니라 Inventory. (Ledger ▶ Inventory ▶ Dashboard 파이프라인)
  */
 function setupDashboardSheet_(sheet) {
   sheet.getRange('A1').setValue('📊 [Inventory Dashboard]').setFontWeight('bold');
@@ -299,20 +312,20 @@ function setupDashboardSheet_(sheet) {
   // A3: 아이템 목록(세로 spill)
   sheet.getRange('A3').setFormula('=FILTER(LIST_ITEM, LIST_ITEM<>"")');
 
-  // B3: 아이템별 총 수량 = INV 수량 합계
+  // B3: 아이템별 총 수량 = Inventory 수량 합계
   sheet.getRange('B3').setFormula(
     '=IFERROR(LET(items, FILTER(LIST_ITEM, LIST_ITEM<>""), ' +
-    'BYROW(items, LAMBDA(i, SUMIFS(INV!$E:$E, INV!$B:$B, i)))), "")'
+    'BYROW(items, LAMBDA(i, SUMIFS(Inventory!$E:$E, Inventory!$B:$B, i)))), "")'
   );
 
   // C2: 버킷 헤더(가로 spill)
   sheet.getRange('C2').setFormula('=IFERROR(TRANSPOSE(TOCOL(LIST_BUCKET, 1, TRUE)), "")');
 
-  // C3: 아이템 × 버킷 매트릭스 = INV 를 (Item, Location) 으로 피벗
+  // C3: 아이템 × 버킷 매트릭스 = Inventory 를 (Item, Location) 으로 피벗
   sheet.getRange('C3').setFormula(
     '=IFERROR(LET(items, FILTER(LIST_ITEM, LIST_ITEM<>""), buckets, TOCOL(LIST_BUCKET, 1, TRUE), ' +
     'MAKEARRAY(ROWS(items), ROWS(buckets), LAMBDA(r, c, ' +
-    'SUMIFS(INV!$E:$E, INV!$B:$B, INDEX(items, r), INV!$C:$C, INDEX(buckets, c))))), "")'
+    'SUMIFS(Inventory!$E:$E, Inventory!$B:$B, INDEX(items, r), Inventory!$C:$C, INDEX(buckets, c))))), "")'
   );
 
   sheet.setFrozenRows(2);
@@ -328,7 +341,7 @@ function removeDefaultSheetIfEmpty_(ss) {
 }
 
 /**
- * 1. Input_Transaction 시트의 UI 구조 및 수식을 초기화하는 함수
+ * 1. Transaction 시트의 UI 구조 및 수식을 초기화하는 함수
  * (현재 배포된 시트 상태 — 검색 영역 + LET/LAMBDA 헬퍼 수식 — 를 재현하도록 갱신)
  */
 function setupInputSheet() {
@@ -338,9 +351,9 @@ function setupInputSheet() {
   const settingsSheet = getRequiredSheet_(ss, 'Settings');
   if (!settingsSheet) return;
 
-  let inputSheet = ss.getSheetByName('Input_Transaction');
+  let inputSheet = ss.getSheetByName('Transaction');
   if (!inputSheet) {
-    inputSheet = ss.insertSheet('Input_Transaction');
+    inputSheet = ss.insertSheet('Transaction');
   }
   // 기존의 유효성 검사 및 내용 전체 초기화 (충돌 방지)
   // ※ clearDataValidations() 는 Range 메서드이므로 시트 전체 범위에 적용해야 함
