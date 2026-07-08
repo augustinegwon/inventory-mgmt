@@ -63,8 +63,15 @@
 - `B3` 매트릭스 본문(spill): `MAKEARRAY(아이템수, 버킷수, LAMBDA(r,c, SUMIFS(To)-SUMIFS(From)))`
 
 ## ✅ 스크립트 파일 구성
-- `Setup.gs` — 공용 상수 + `onOpen`(메뉴), `setupInputSheet`, `createTriggers`, `migrateSerialsToText`
+- `Setup.gs` — 공용 상수 + `onOpen`(메뉴), `initializeSystem`(빈 시트 부트스트랩), `setupInputSheet`, `createTriggers`, `migrateSerialsToText`, 시트 헬퍼(`getRequiredSheet_`/`getOrCreateSheet_`/`setupLedgerSheet_`/`setupSettingsSheet_`/`defineNamedRanges_`/`setupDashboardSheet_`)
 - `Transaction.gs` — `updateDynamicUI`, `submitTransaction` + 재고 계산 헬퍼
+
+## 🚀 빈 스프레드시트에서 처음 세팅하는 순서
+1. Apps Script 편집기에 `Setup.gs` / `Transaction.gs` 붙여넣고 저장
+2. 시트 새로고침 → **📦 Inventory → 🚀 전체 초기화 (Initialize)** 실행 (권한 승인)
+   - Ledger/Settings/Dashboard/Input_Transaction 시트 + 헤더 + 마스터 데이터 + 이름범위 + 대시보드 수식 생성, 빈 `Sheet1` 제거
+3. **📦 Inventory → 편집 트리거 등록** 실행 (동적 UI 동작에 필요)
+4. 제출 버튼(도형)에 `submitTransaction` 함수 연결 (또는 메뉴의 "트랜잭션 제출" 사용)
 
 > (해결됨) 과거 `setupInputSheet()`는 구버전 헬퍼 수식(단순 FILTER)을 써서 재실행 시 검색 UI·투어 버킷이 깨질 위험이 있었으나,
 > 현재 `Setup.gs`의 `setupInputSheet()`는 위에 정리된 **현재 배포 수식(LET/LAMBDA, LIST_BUCKET)**을 그대로 재현하도록 갱신되었습니다.

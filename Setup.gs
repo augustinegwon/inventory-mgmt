@@ -51,10 +51,167 @@ function onOpen() {
     .createMenu('📦 Inventory')
     .addItem('트랜잭션 제출 (Submit)', 'submitTransaction')
     .addSeparator()
-    .addItem('입력폼 초기 설정 (Setup)', 'setupInputSheet')
+    .addItem('🚀 전체 초기화 (Initialize)', 'initializeSystem')
+    .addItem('입력폼 재설정 (Setup Form)', 'setupInputSheet')
     .addItem('편집 트리거 등록 (Install Trigger)', 'createTriggers')
     .addItem('시리얼 텍스트 변환 (Migrate Serials)', 'migrateSerialsToText')
     .addToUi();
+}
+
+/**
+ * [빈 스프레드시트용] 시스템 전체를 처음부터 세운다.
+ * 필요한 시트 4개(Ledger/Settings/Dashboard/Input_Transaction), 헤더, 마스터 시딩,
+ * 이름범위(LIST_*), 대시보드 수식, 입력폼을 순서대로 생성한다.
+ */
+function initializeSystem() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+
+  // 1) 원장
+  const ledger = getOrCreateSheet_(ss, 'Ledger');
+  setupLedgerSheet_(ledger);
+
+  // 2) 마스터(Settings) — 헤더 + (비어있으면) 마스터 데이터 시딩
+  const settings = getOrCreateSheet_(ss, 'Settings');
+  setupSettingsSheet_(settings);
+
+  // 3) 이름범위 — 수식이 참조하므로 시트/데이터 준비 후 먼저 정의
+  defineNamedRanges_(ss, settings);
+
+  // 4) 대시보드
+  const dashboard = getOrCreateSheet_(ss, 'Dashboard');
+  setupDashboardSheet_(dashboard);
+
+  // 5) 입력폼 (이름범위/Settings 참조)
+  setupInputSheet();
+
+  // 6) 기본으로 생기는 빈 'Sheet1' 정리
+  removeDefaultSheetIfEmpty_(ss);
+
+  SpreadsheetApp.flush();
+  ui.alert(
+    '✅ 초기화 완료!\n\n' +
+    'Ledger / Settings / Dashboard / Input_Transaction 시트와 이름범위(LIST_*)를 생성했습니다.\n\n' +
+    '다음 단계: 메뉴 → 📦 Inventory → "편집 트리거 등록"을 한 번 실행해 주세요.'
+  );
+}
+
+/** 시트를 가져오되 없으면 새로 만든다 */
+function getOrCreateSheet_(ss, name) {
+  return ss.getSheetByName(name) || ss.insertSheet(name);
+}
+
+/** 원장(Ledger) 헤더 및 형식 설정 (기존 데이터는 건드리지 않음) */
+function setupLedgerSheet_(sheet) {
+  const headers = ['Timestamp', 'Type', 'Category', 'Item', 'Serial Number',
+                   'From', 'To', 'Quantity', 'Worker', 'Note'];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
+  sheet.getRange('E:E').setNumberFormat('@'); // 시리얼 텍스트 고정
+  sheet.setFrozenRows(1);
+}
+
+/** 마스터(Settings) 헤더 + (A2가 비어있을 때만) 마스터 데이터 시딩 */
+function setupSettingsSheet_(sheet) {
+  sheet.getRange('A1').setValue('Category').setFontWeight('bold');
+  sheet.getRange('B1').setValue('Item').setFontWeight('bold');
+  sheet.getRange('C1').setValue('Manage Serial').setFontWeight('bold');
+  sheet.getRange('E1').setValue('Location').setFontWeight('bold');
+  sheet.getRange('F1').setValue('Tour Package').setFontWeight('bold');
+  sheet.getRange('H1').setValue('USER').setFontWeight('bold');
+  sheet.setFrozenRows(1);
+
+  // 이미 데이터가 있으면 덮어쓰지 않음
+  if (sheet.getRange('A2').getValue() !== '') return;
+
+  // [Category, Item, Manage Serial]
+  const items = [
+    ['SERVER', 'SWITCH (NETGEAR MS108UP)', 'YES'],
+    ['SERVER', 'SWITCH (TP-LINK)', 'YES'],
+    ['SERVER', 'OPTICAL CABLE', 'NO'],
+    ['SERVER', 'LAN CABLE', 'NO'],
+    ['SERVER', 'HDMI CABLE', 'NO'],
+    ['SERVER', 'HDMI SPLITTER', 'YES'],
+    ['SERVER', 'TRIPOD', 'NO'],
+    ['SERVER', 'AUDIO PROCESSOR (SB1815)', 'YES'],
+    ['SERVER', 'ANDROID PHONE (GALAXY A25)', 'YES'],
+    ['SERVER', 'IPAD MINI', 'YES'],
+    ['SERVER', 'SOUND LEVEL METER', 'YES'],
+    ['SERVER', 'LIGHT METER (LX1330B)', 'YES'],
+    ['SERVER', 'USB-C MICROPHONE', 'NO'],
+    ['FLOOR', 'LONG CHARGING CABLE (NEW)', 'NO'],
+    ['FLOOR', 'LONG CHARGING CABLE (OLD)', 'NO'],
+    ['FLOOR', 'OFFICIAL CHARGING CABLE', 'NO'],
+    ['FLOOR', 'HARNESS', 'NO'],
+    ['FLOOR', 'ROUND CHARGER (A TYPE)', 'NO'],
+    ['FLOOR', 'ROUND CHARGER (C TYPE)', 'NO'],
+    ['FLOOR', 'SQUARE CHARGER', 'NO'],
+    ['FLOOR', 'DAISY-CHAIN EXTENSION CORD', 'NO'],
+    ['FLOOR', '3M EXTENSION CORD (4-PORT)', 'NO'],
+    ['FLOOR', '1M EXTENSION CORD (10-PORT)', 'NO'],
+    ['FLOOR', '15M EXTENSION CORD (1-PORT)', 'NO'],
+    ['FLOOR', 'VR HYGIENE MASK', 'NO'],
+    ['CONTENT UPDATE', 'USB C-C CABLE', 'NO'],
+    ['CONTENT UPDATE', 'USB A-C CABLE', 'NO'],
+    ['CONTENT UPDATE', 'USB-C 4-PORT HUB', 'NO'],
+    ['CONTENT UPDATE', 'USB C-LAN ADAPTER', 'NO'],
+    ['CONTENT UPDATE', 'USB DRIVE', 'YES'],
+    ['STORAGE', 'HEADSET CASE OLD', 'NO'],
+    ['STORAGE', 'HEADSET CASE NEW', 'NO'],
+    ['STORAGE', 'MISC CASE OLD', 'NO'],
+    ['STORAGE', 'MISC CASE NEW', 'NO'],
+    ['STORAGE', '27 GAL TOTE (= 100L STORAGE BOX)', 'NO'],
+    ['STORAGE', 'BIKE LOCK', 'NO'],
+    ['PERIPHERAL', 'FACIAL SPACER', 'NO'],
+    ['PERIPHERAL', 'HEADSET STRAP', 'NO'],
+    ['PERIPHERAL', 'LENS PROTECTOR L', 'NO'],
+    ['PERIPHERAL', 'LENS PROTECTOR R', 'NO'],
+    ['PERIPHERAL', 'QUEST 3 CONTROLLER L&R', 'NO']
+  ];
+  sheet.getRange(2, 1, items.length, 3).setValues(items);
+
+  const locations = ['KR OFFICE', 'GMP WH A', 'GMP WH B', 'GMP WH C', 'GMP WH D',
+                     'GMP WH E', 'GMP WH F', 'GMP WH G', 'GMP WH H', 'GMP WH I'];
+  sheet.getRange(2, 5, locations.length, 1).setValues(locations.map(function (v) { return [v]; }));
+
+  const tours = ['G1 US1', 'G1 US2', 'G2 MX', 'G3 KR', 'G4 JP1', 'G4 JP2', 'G4 JP3',
+                 'G4 JP4', 'G4 JP5', 'G4 JP6', 'G5 TW1', 'G5 TW2', 'G6 CN', 'G7 HK/MO',
+                 'G8 SG', 'G9 EU1', 'G9 EU2', 'G10 TH', 'G11 PH', 'G12 EX'];
+  sheet.getRange(2, 6, tours.length, 1).setValues(tours.map(function (v) { return [v]; }));
+
+  const users = ['AUGGIE@AMAZEVR.COM', 'ALEX@AMAZEVR.COM', 'JAE@AMAZEVR.COM'];
+  sheet.getRange(2, 8, users.length, 1).setValues(users.map(function (v) { return [v]; }));
+}
+
+/** 이름범위 정의(있으면 갱신). 수식이 참조하므로 필수 */
+function defineNamedRanges_(ss, settings) {
+  ss.setNamedRange('LIST_CATEGORY', settings.getRange('A2:A1000'));
+  ss.setNamedRange('LIST_ITEM', settings.getRange('B2:B1000'));
+  ss.setNamedRange('LIST_BUCKET', settings.getRange('E2:F1000')); // 물리 위치 + 투어
+}
+
+/** 대시보드(재고 매트릭스) 수식 설정 */
+function setupDashboardSheet_(sheet) {
+  sheet.getRange('A1').setValue('📊 [Inventory Matrix]').setFontWeight('bold');
+  // A3: 아이템 목록(세로 spill)
+  sheet.getRange('A3').setFormula('=FILTER(LIST_ITEM, LIST_ITEM<>"")');
+  // B2: 버킷 헤더(가로 spill)
+  sheet.getRange('B2').setFormula('=IFERROR(TRANSPOSE(TOCOL(LIST_BUCKET, 1, TRUE)), "")');
+  // B3: 아이템 × 버킷 재고 매트릭스(2차원 spill)
+  sheet.getRange('B3').setFormula(
+    '=IFERROR(LET(items, FILTER(LIST_ITEM, LIST_ITEM<>""), buckets, TOCOL(LIST_BUCKET, 1, TRUE), ' +
+    'MAKEARRAY(ROWS(items), ROWS(buckets), LAMBDA(r, c, LET(i, INDEX(items, r), b, INDEX(buckets, c), ' +
+    'SUMIFS(Ledger!$H:$H, Ledger!$D:$D, i, Ledger!$G:$G, b) - SUMIFS(Ledger!$H:$H, Ledger!$D:$D, i, Ledger!$F:$F, b))))), "")'
+  );
+  sheet.setFrozenRows(2);
+  sheet.setFrozenColumns(1);
+}
+
+/** 새 스프레드시트에 기본 생성되는 빈 'Sheet1' 을 (비어있고 다른 시트가 있으면) 삭제 */
+function removeDefaultSheetIfEmpty_(ss) {
+  const sh = ss.getSheetByName('Sheet1') || ss.getSheetByName('시트1');
+  if (sh && ss.getSheets().length > 1 && sh.getLastRow() === 0 && sh.getLastColumn() === 0) {
+    ss.deleteSheet(sh);
+  }
 }
 
 /**
