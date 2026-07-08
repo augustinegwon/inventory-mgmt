@@ -3,12 +3,16 @@
 `260707_Inventory.xlsx`에서 추출한 **실제 시트 상태**입니다.
 스크립트는 `Setup.gs` / `Transaction.gs` 두 파일로 구성됩니다(아래 참고).
 
-## 시트 목록
+## 시트 목록 / 데이터 흐름
+```
+Ledger ──(연산)──▶ INV ──(참조)──▶ Dashboard
+```
 | 시트 | 역할 |
 |---|---|
 | `Input_Transaction` | 입력 폼 UI |
 | `Ledger` | 거래 원장 (append-only, 재고의 단일 진실 공급원) |
-| `Dashboard` | 아이템 × 위치 재고 매트릭스 |
+| `INV` | Ledger를 연산해 정리한 재고 데이터 계층 (아이템 × 위치 매트릭스) |
+| `Dashboard` | INV를 반영하는 표시 계층 (미러링, 서식/차트 커스터마이즈용) |
 | `Settings` | 마스터 데이터 |
 
 ## 이름 있는 범위 (Named Ranges)
@@ -57,7 +61,7 @@
 - `Z1` 검색 Item 후보(Category로 필터):
   `=IFERROR(IF(C3="",FILTER(LIST_ITEM,LIST_ITEM<>""),FILTER(LIST_ITEM,LIST_CATEGORY=C3,LIST_ITEM<>"")),"")`
 
-## Dashboard — 재고 매트릭스
+## INV — 재고 데이터 계층 (Ledger 연산)
 - `A2` `Item` / `B2` `Total` / `C2~` 버킷 헤더
 - `A3` 아래로 아이템 목록: `=FILTER(LIST_ITEM, LIST_ITEM<>"")`
 - `B3` 품목별 **총 수량**(spill): `BYROW(items, LAMBDA(i, SUMIFS(H,D=i,B="ADD") - SUMIFS(H,D=i,B="REMOVE")))` — MOVE는 총량 불변이라 ADD−REMOVE = 매트릭스 행 합계
@@ -65,8 +69,13 @@
 - `C3` 매트릭스 본문(spill): `MAKEARRAY(아이템수, 버킷수, LAMBDA(r,c, SUMIFS(To)-SUMIFS(From)))`
 - Freeze: 2행 + **2열(A Item, B Total)**
 
+## Dashboard — 표시 계층 (INV 반영)
+- `A1` 제목(정적), `A2` INV 미러링: `=ARRAYFORMULA(IF(INV!$A$2:$AZ$300="", "", INV!$A$2:$AZ$300))`
+- 계산은 INV에서만 수행. Dashboard는 참조만 하므로 서식·차트를 자유롭게 얹어도 계산부에 영향 없음
+- Freeze: 2행 + 2열
+
 ## ✅ 스크립트 파일 구성
-- `Setup.gs` — 공용 상수 + `onOpen`(메뉴), `initializeSystem`(빈 시트 부트스트랩), `setupInputSheet`, `createTriggers`, `migrateSerialsToText`, 시트 헬퍼(`getRequiredSheet_`/`getOrCreateSheet_`/`setupLedgerSheet_`/`setupSettingsSheet_`/`defineNamedRanges_`/`setupDashboardSheet_`)
+- `Setup.gs` — 공용 상수 + `onOpen`(메뉴), `initializeSystem`(빈 시트 부트스트랩), `setupInputSheet`, `createTriggers`, `migrateSerialsToText`, 시트 헬퍼(`getRequiredSheet_`/`getOrCreateSheet_`/`setupLedgerSheet_`/`setupSettingsSheet_`/`defineNamedRanges_`/`setupInvSheet_`/`setupDashboardSheet_`)
 - `Transaction.gs` — `updateDynamicUI`, `submitTransaction` + 재고 계산 헬퍼
 
 ## 🚀 빈 스프레드시트에서 처음 세팅하는 순서

@@ -78,14 +78,18 @@ function initializeSystem() {
   // 3) 이름범위 — 수식이 참조하므로 시트/데이터 준비 후 먼저 정의
   defineNamedRanges_(ss, settings);
 
-  // 4) 대시보드
+  // 4) INV — Ledger를 연산해 재고를 정리하는 데이터 계층
+  const inv = getOrCreateSheet_(ss, 'INV');
+  setupInvSheet_(inv);
+
+  // 5) 대시보드 — INV 내용을 반영하는 표시 계층
   const dashboard = getOrCreateSheet_(ss, 'Dashboard');
   setupDashboardSheet_(dashboard);
 
-  // 5) 입력폼 (이름범위/Settings 참조)
+  // 6) 입력폼 (이름범위/Settings 참조)
   setupInputSheet();
 
-  // 6) 기본으로 생기는 빈 'Sheet1' 정리
+  // 7) 기본으로 생기는 빈 'Sheet1' 정리
   removeDefaultSheetIfEmpty_(ss);
 
   SpreadsheetApp.flush();
@@ -189,9 +193,12 @@ function defineNamedRanges_(ss, settings) {
   ss.setNamedRange('LIST_BUCKET', settings.getRange('E2:F1000')); // 물리 위치 + 투어
 }
 
-/** 대시보드(재고 매트릭스) 수식 설정 */
-function setupDashboardSheet_(sheet) {
-  sheet.getRange('A1').setValue('📊 [Inventory Matrix]').setFontWeight('bold');
+/**
+ * INV — Ledger를 연산해 "아이템 × 위치" 재고를 정리하는 데이터 계층.
+ * (기존에 Dashboard가 직접 계산하던 수식을 이 시트로 이동)
+ */
+function setupInvSheet_(sheet) {
+  sheet.getRange('A1').setValue('📦 INV (Ledger 연산 결과)').setFontWeight('bold');
   sheet.getRange('A2').setValue('Item').setFontWeight('bold');
   sheet.getRange('B2').setValue('Total').setFontWeight('bold');
 
@@ -215,6 +222,20 @@ function setupDashboardSheet_(sheet) {
     'SUMIFS(Ledger!$H:$H, Ledger!$D:$D, i, Ledger!$G:$G, b) - SUMIFS(Ledger!$H:$H, Ledger!$D:$D, i, Ledger!$F:$F, b))))), "")'
   );
 
+  sheet.setFrozenRows(2);
+  sheet.setFrozenColumns(2); // A(Item) + B(Total) 고정
+}
+
+/**
+ * Dashboard — INV 시트 내용을 그대로 반영하는 표시 계층.
+ * (계산은 하지 않고 INV를 미러링. 이후 서식/차트 등은 이 시트에서 자유롭게 커스터마이즈)
+ */
+function setupDashboardSheet_(sheet) {
+  sheet.getRange('A1').setValue('📊 [Inventory Dashboard]').setFontWeight('bold');
+  // A2 앵커: INV의 헤더(2행)부터 아래·오른쪽 전체를 미러링. 빈 셀은 공백으로 유지.
+  sheet.getRange('A2').setFormula(
+    '=ARRAYFORMULA(IF(INV!$A$2:$AZ$300="", "", INV!$A$2:$AZ$300))'
+  );
   sheet.setFrozenRows(2);
   sheet.setFrozenColumns(2); // A(Item) + B(Total) 고정
 }
