@@ -217,7 +217,8 @@ function submitTransaction() {
     ledgerSheet.getRange(newRow, LEDGER_COL.SERIAL + 1).setNumberFormat('@'); // 시리얼 텍스트 고정
 
     // 제출 완료 후 입력 폼 초기화 (Type, User 정보는 편의상 유지)
-    // F4 는 '=$C$4' 수식이므로 건드리지 않고 검색 Item(C4)만 비운다
+    // F4 는 '=$C$4' 수식이므로 건드리지 않고 검색 Category/Item(C3/C4)만 비운다
+    inputSheet.getRange('C3').setValue(''); // 검색 Category 초기화
     inputSheet.getRange('C4').setValue(''); // 검색 Item 초기화 → F4 자동으로 빈값
     inputSheet.getRange('F5').setValue('N/A'); // Serial 초기화
     inputSheet.getRange('F6').setValue(''); // FROM 초기화
