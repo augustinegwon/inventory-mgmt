@@ -192,18 +192,31 @@ function defineNamedRanges_(ss, settings) {
 /** 대시보드(재고 매트릭스) 수식 설정 */
 function setupDashboardSheet_(sheet) {
   sheet.getRange('A1').setValue('📊 [Inventory Matrix]').setFontWeight('bold');
+  sheet.getRange('A2').setValue('Item').setFontWeight('bold');
+  sheet.getRange('B2').setValue('Total').setFontWeight('bold');
+
   // A3: 아이템 목록(세로 spill)
   sheet.getRange('A3').setFormula('=FILTER(LIST_ITEM, LIST_ITEM<>"")');
-  // B2: 버킷 헤더(가로 spill)
-  sheet.getRange('B2').setFormula('=IFERROR(TRANSPOSE(TOCOL(LIST_BUCKET, 1, TRUE)), "")');
-  // B3: 아이템 × 버킷 재고 매트릭스(2차원 spill)
+
+  // B3: 아이템별 총 수량 (ADD 합계 - REMOVE 합계; MOVE는 총량 불변)
   sheet.getRange('B3').setFormula(
+    '=IFERROR(LET(items, FILTER(LIST_ITEM, LIST_ITEM<>""), ' +
+    'BYROW(items, LAMBDA(i, SUMIFS(Ledger!$H:$H, Ledger!$D:$D, i, Ledger!$B:$B, "ADD") ' +
+    '- SUMIFS(Ledger!$H:$H, Ledger!$D:$D, i, Ledger!$B:$B, "REMOVE")))), "")'
+  );
+
+  // C2: 버킷 헤더(가로 spill)
+  sheet.getRange('C2').setFormula('=IFERROR(TRANSPOSE(TOCOL(LIST_BUCKET, 1, TRUE)), "")');
+
+  // C3: 아이템 × 버킷 재고 매트릭스(2차원 spill)
+  sheet.getRange('C3').setFormula(
     '=IFERROR(LET(items, FILTER(LIST_ITEM, LIST_ITEM<>""), buckets, TOCOL(LIST_BUCKET, 1, TRUE), ' +
     'MAKEARRAY(ROWS(items), ROWS(buckets), LAMBDA(r, c, LET(i, INDEX(items, r), b, INDEX(buckets, c), ' +
     'SUMIFS(Ledger!$H:$H, Ledger!$D:$D, i, Ledger!$G:$G, b) - SUMIFS(Ledger!$H:$H, Ledger!$D:$D, i, Ledger!$F:$F, b))))), "")'
   );
+
   sheet.setFrozenRows(2);
-  sheet.setFrozenColumns(1);
+  sheet.setFrozenColumns(2); // A(Item) + B(Total) 고정
 }
 
 /** 새 스프레드시트에 기본 생성되는 빈 'Sheet1' 을 (비어있고 다른 시트가 있으면) 삭제 */

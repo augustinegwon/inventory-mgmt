@@ -58,9 +58,12 @@
   `=IFERROR(IF(C3="",FILTER(LIST_ITEM,LIST_ITEM<>""),FILTER(LIST_ITEM,LIST_CATEGORY=C3,LIST_ITEM<>"")),"")`
 
 ## Dashboard — 재고 매트릭스
+- `A2` `Item` / `B2` `Total` / `C2~` 버킷 헤더
 - `A3` 아래로 아이템 목록: `=FILTER(LIST_ITEM, LIST_ITEM<>"")`
-- `B2` 가로 헤더(버킷): `=IFERROR(TRANSPOSE(TOCOL(LIST_BUCKET,1,TRUE)),"")`
-- `B3` 매트릭스 본문(spill): `MAKEARRAY(아이템수, 버킷수, LAMBDA(r,c, SUMIFS(To)-SUMIFS(From)))`
+- `B3` 품목별 **총 수량**(spill): `BYROW(items, LAMBDA(i, SUMIFS(H,D=i,B="ADD") - SUMIFS(H,D=i,B="REMOVE")))` — MOVE는 총량 불변이라 ADD−REMOVE = 매트릭스 행 합계
+- `C2` 가로 헤더(버킷): `=IFERROR(TRANSPOSE(TOCOL(LIST_BUCKET,1,TRUE)),"")`
+- `C3` 매트릭스 본문(spill): `MAKEARRAY(아이템수, 버킷수, LAMBDA(r,c, SUMIFS(To)-SUMIFS(From)))`
+- Freeze: 2행 + **2열(A Item, B Total)**
 
 ## ✅ 스크립트 파일 구성
 - `Setup.gs` — 공용 상수 + `onOpen`(메뉴), `initializeSystem`(빈 시트 부트스트랩), `setupInputSheet`, `createTriggers`, `migrateSerialsToText`, 시트 헬퍼(`getRequiredSheet_`/`getOrCreateSheet_`/`setupLedgerSheet_`/`setupSettingsSheet_`/`defineNamedRanges_`/`setupDashboardSheet_`)
