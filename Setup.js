@@ -338,10 +338,37 @@ function setupDashboardSheet_(sheet) {
       return '=IFERROR(BYROW(CHOOSECOLS(SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), 2), LAMBDA(i, ' + terms + ')), "")';
     });
     sheet.getRange(3, 4, 1, formulas.length).setFormulas([formulas]);
+
+    // GMP WH 하위 구역(연속된 gmp-member 열)을 열 그룹으로 묶어 접기/펼치기 제공
+    clearColumnGroups_(sheet);
+    let startIdx = -1, count = 0;
+    columns.forEach(function (c, i) {
+      if (c.kind === 'gmp-member') { if (startIdx === -1) startIdx = i; count++; }
+    });
+    if (count > 0) {
+      const startCol = 4 + startIdx; // 데이터 열은 D(4)부터 시작
+      sheet.getRange(1, startCol, 1, count).shiftColumnGroupDepth(1);
+      sheet.getColumnGroup(startCol, 1).collapse(); // 기본 접힘 (GMP WH 합계만 보이도록)
+    }
   }
 
   sheet.setFrozenRows(2);
   sheet.setFrozenColumns(3);
+}
+
+/** Dashboard의 기존 열 그룹을 모두 제거한다 (재구성 시 그룹 중첩 방지). */
+function clearColumnGroups_(sheet) {
+  const maxCols = sheet.getMaxColumns();
+  let changed = true, guard = 0;
+  while (changed && guard < 100) {
+    changed = false; guard++;
+    for (let c = 1; c <= maxCols; c++) {
+      const d = sheet.getColumnGroupDepth(c);
+      if (d > 0) {
+        try { sheet.getColumnGroup(c, d).remove(); changed = true; break; } catch (e) {}
+      }
+    }
+  }
 }
 
 
