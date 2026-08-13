@@ -314,9 +314,9 @@ function setupDashboardSheet_(sheet) {
     '=IFERROR(SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), "")'
   );
 
-  // C3: Total — A3와 동일한 정렬 순서(A3# 스필)를 재사용해 품목별 총합
+  // C3: Total — A3와 동일한 정렬식(SORT/FILTER)으로 품목 순서를 맞춰 총합
   sheet.getRange('C3').setFormula(
-    '=IFERROR(BYROW(CHOOSECOLS($A$3#, 2), LAMBDA(i, SUMIFS(Inventory!$F:$F, Inventory!$C:$C, i))), "")'
+    '=IFERROR(BYROW(CHOOSECOLS(SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), 2), LAMBDA(i, SUMIFS(Inventory!$F:$F, Inventory!$C:$C, i))), "")'
   );
 
   // D열 이후: 위치 매트릭스 (스크립트가 정한 순서 + GMP WH 합계 열)
@@ -330,7 +330,7 @@ function setupDashboardSheet_(sheet) {
         return 'SUMIFS(Inventory!$F:$F, Inventory!$C:$C, i, Inventory!$D:$D, "' +
                String(loc).replace(/"/g, '""') + '")';
       }).join(' + ');
-      return '=IFERROR(BYROW(CHOOSECOLS($A$3#, 2), LAMBDA(i, ' + terms + ')), "")';
+      return '=IFERROR(BYROW(CHOOSECOLS(SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), 2), LAMBDA(i, ' + terms + ')), "")';
     });
     sheet.getRange(3, 4, 1, formulas.length).setFormulas([formulas]);
   }
