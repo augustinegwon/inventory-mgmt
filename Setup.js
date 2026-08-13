@@ -325,6 +325,11 @@ function setupDashboardSheet_(sheet) {
     const headers = columns.map(function (c) { return c.label; });
     sheet.getRange(2, 4, 1, headers.length).setValues([headers]).setFontWeight('bold');
 
+    // 헤더(2행) 배경색으로 GMP WH ⊃ 하위 구역 계층을 시각화
+    const bgOf = { 'gmp-sum': '#a4c2f4', 'gmp-member': '#d9e7fb' }; // 합계=연한 파랑 / 하위=더 연한 파랑
+    const backgrounds = columns.map(function (c) { return bgOf[c.kind] || null; });
+    sheet.getRange(2, 4, 1, columns.length).setBackgrounds([backgrounds]);
+
     const formulas = columns.map(function (c) {
       const terms = c.locs.map(function (loc) {
         return 'SUMIFS(Inventory!$F:$F, Inventory!$C:$C, i, Inventory!$D:$D, "' +
@@ -367,8 +372,8 @@ function buildDashboardColumns_(ss) {
 
   const columns = [];
   if (physical.indexOf('KR OFFICE') !== -1) columns.push({ label: 'KR OFFICE', locs: ['KR OFFICE'] });
-  if (gmpMembers.length > 0) columns.push({ label: 'GMP WH', locs: gmpMembers });   // 합계 열
-  gmpMembers.forEach(function (l) { columns.push({ label: l, locs: [l] }); });
+  if (gmpMembers.length > 0) columns.push({ label: 'GMP WH', locs: gmpMembers, kind: 'gmp-sum' });   // 합계 열
+  gmpMembers.forEach(function (l) { columns.push({ label: l, locs: [l], kind: 'gmp-member' }); });   // GMP WH 하위 구역
   if (physical.indexOf('US OFFICE') !== -1) columns.push({ label: 'US OFFICE', locs: ['US OFFICE'] });
   physical.forEach(function (l) { if (!placed[l]) columns.push({ label: l, locs: [l] }); }); // 기타 물리 위치
   tour.forEach(function (l) { columns.push({ label: l, locs: [l] }); });            // 투어 패키지
