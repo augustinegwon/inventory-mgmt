@@ -25,7 +25,7 @@ function updateDynamicUI(e) {
       const idCell = sheet.getRange(range.getRow(), 1); 
       if (idCell.getValue() === '') {
         const lastRow = sheet.getLastRow();
-        const ids = sheet.getRange(2, 1, lastRow, 1).getValues().flat();
+        const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues().flat();
         let maxNum = 1000;
         for (let i = 0; i < ids.length; i++) {
           const match = String(ids[i]).match(/ITM-(\d+)/);
