@@ -26,6 +26,9 @@ const LEDGER_COL = {
 const EXTERNAL_VENDOR = 'EXTERNAL (VENDOR)';
 const EXTERNAL_SCRAP = 'EXTERNAL (SCRAP)';
 
+// 단위(Unit) 드롭다운 허용 목록 — Settings_Item E열 검증에 사용
+const UNIT_OPTIONS = ['EA', 'box', 'roll', 'set', 'pack', 'pair', 'm'];
+
 /**
  * 필수 시트를 가져오되, 없으면 실제 시트 목록과 함께 알림을 띄우고 null 을 반환한다.
  * (호출부에서 null 이면 즉시 return 하여 크래시 대신 명확한 안내로 중단)
@@ -56,6 +59,7 @@ function onOpen() {
     .addItem('입력폼 재설정 (Setup Form)', 'setupInputSheet')
     .addItem('재고 새로고침 (Rebuild Inventory)', 'rebuildInv')
     .addItem('대시보드 재구성 (Rebuild Dashboard)', 'rebuildDashboard')
+    .addItem('단위(Unit) 도입/갱신 (Setup Unit)', 'setupUnitColumn')
     .addItem('편집 트리거 등록 (Install Trigger)', 'createTriggers')
     .addItem('시리얼 텍스트 변환 (Migrate Serials)', 'migrateSerialsToText')
     .addItem('옛 원본 탭 아카이브 (Archive Origin Tabs)', 'archiveOriginTabs')
@@ -149,7 +153,7 @@ function setupLedgerSheet_(sheet) {
  */
 function setupSettingsSheet_(sheet, locSheet, userSheet) {
   // ① Settings (물품 마스터) 헤더만 고정
-  sheet.getRange('A1:D1').setValues([['Item ID', 'Category', 'Item Name', 'Manage Serial']]).setFontWeight('bold');
+  sheet.getRange('A1:E1').setValues([['Item ID', 'Category', 'Item Name', 'Manage Serial', 'Unit']]).setFontWeight('bold');
   sheet.setFrozenRows(1);
 
   // ② Settings_Location (장소 마스터) 헤더만 고정
@@ -209,11 +213,12 @@ function rebuildInv_(ss) {
 
   const catOf = {};
   const serialOf = {};
-  const nameOf = {}; 
+  const nameOf = {};
+  const unitOf = {};
   const sLast = settings.getLastRow();
-  
+
   if (sLast >= 2) {
-    const sv = settings.getRange(2, 1, sLast - 1, 4).getValues(); 
+    const sv = settings.getRange(2, 1, sLast - 1, 5).getValues(); // A:E (E=Unit)
     for (let i = 0; i < sv.length; i++) {
       const id = sv[i][0];
       const name = sv[i][2];
@@ -221,6 +226,7 @@ function rebuildInv_(ss) {
         catOf[id] = sv[i][1];
         nameOf[id] = name;
         serialOf[id] = String(sv[i][3]).toUpperCase() === 'YES';
+        unitOf[id] = sv[i][4]; // E: Unit
       }
     }
   }
@@ -244,7 +250,7 @@ function rebuildInv_(ss) {
   const keys = Object.keys(map);
   for (let i = 0; i < keys.length; i++) {
     const e = map[keys[i]];
-    if (e.qty > 0) out.push([e.cat, e.item, nameOf[e.item] || 'UNKNOWN', e.loc, e.serial, e.qty]);
+    if (e.qty > 0) out.push([e.cat, e.item, nameOf[e.item] || 'UNKNOWN', e.loc, e.serial, e.qty, unitOf[e.item] || '']);
   }
   
   out.sort(function (a, b) {
@@ -257,7 +263,7 @@ function rebuildInv_(ss) {
   inv.clearContents();
   inv.getRange(1, 1, inv.getMaxRows(), inv.getMaxColumns()).setFontWeight('normal');
   
-  const headers = ['Category', 'Item ID', 'Item Name', 'Location', 'Serial Number', 'Quantity'];
+  const headers = ['Category', 'Item ID', 'Item Name', 'Location', 'Serial Number', 'Quantity', 'Unit'];
   inv.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight('bold');
   inv.getRange('E:E').setNumberFormat('@');
   
@@ -304,9 +310,10 @@ function setupDashboardSheet_(sheet) {
   sheet.getRange('A1').setValue('📊 [Inventory Dashboard]').setFontWeight('bold');
   sheet.getRange('A2').setValue('Category').setFontWeight('bold');
   sheet.getRange('B2').setValue('Item Name').setFontWeight('bold');
-  sheet.getRange('C2').setValue('Total').setFontWeight('bold');
+  sheet.getRange('C2').setValue('Unit').setFontWeight('bold');
+  sheet.getRange('D2').setValue('Total').setFontWeight('bold');
 
-  sheet.getRange('D1').setFormula(
+  sheet.getRange('E1').setFormula(
     '=IF(Ledger!A2="Timestamp", "🕒 기록 없음", "🕒 최종 업데이트: " & TEXT(Ledger!A2, "yyyy-mm-dd HH:mm:ss"))'
   ).setFontWeight('bold').setFontColor('#4a86e8');
 
@@ -315,21 +322,27 @@ function setupDashboardSheet_(sheet) {
     '=IFERROR(SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), "")'
   );
 
-  // C3: Total — A3와 동일한 정렬식(SORT/FILTER)으로 품목 순서를 맞춰 총합
+  // C3: Unit — 품목명으로 Settings_Item(E열)에서 단위 조회
   sheet.getRange('C3').setFormula(
+    '=IFERROR(BYROW(CHOOSECOLS(SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), 2), LAMBDA(i, IFERROR(VLOOKUP(i, Settings_Item!$C:$E, 3, FALSE), ""))), "")'
+  );
+
+  // D3: Total — A3와 동일한 정렬식(SORT/FILTER)으로 품목 순서를 맞춰 총합
+  sheet.getRange('D3').setFormula(
     '=IFERROR(BYROW(CHOOSECOLS(SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), 2), LAMBDA(i, SUMIFS(Inventory!$F:$F, Inventory!$C:$C, i))), "")'
   );
 
-  // D열 이후: 위치 매트릭스 (스크립트가 정한 순서 + GMP WH 합계 열)
+  // E열 이후: 위치 매트릭스 (스크립트가 정한 순서 + GMP WH 합계 열)
   const columns = buildDashboardColumns_(ss);
   if (columns.length > 0) {
+    const MATRIX_START = 5; // E열부터 위치 매트릭스 시작 (A~D = Category/Item/Unit/Total)
     const headers = columns.map(function (c) { return c.label; });
-    sheet.getRange(2, 4, 1, headers.length).setValues([headers]).setFontWeight('bold');
+    sheet.getRange(2, MATRIX_START, 1, headers.length).setValues([headers]).setFontWeight('bold');
 
     // 헤더(2행) 배경색으로 GMP WH ⊃ 하위 구역 계층을 시각화
     const bgOf = { 'gmp-sum': '#a4c2f4', 'gmp-member': '#d9e7fb' }; // 합계=연한 파랑 / 하위=더 연한 파랑
     const backgrounds = columns.map(function (c) { return bgOf[c.kind] || null; });
-    sheet.getRange(2, 4, 1, columns.length).setBackgrounds([backgrounds]);
+    sheet.getRange(2, MATRIX_START, 1, columns.length).setBackgrounds([backgrounds]);
 
     const formulas = columns.map(function (c) {
       const terms = c.locs.map(function (loc) {
@@ -338,7 +351,7 @@ function setupDashboardSheet_(sheet) {
       }).join(' + ');
       return '=IFERROR(BYROW(CHOOSECOLS(SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), 2), LAMBDA(i, ' + terms + ')), "")';
     });
-    sheet.getRange(3, 4, 1, formulas.length).setFormulas([formulas]);
+    sheet.getRange(3, MATRIX_START, 1, formulas.length).setFormulas([formulas]);
 
     // GMP WH 하위 구역(연속된 gmp-member 열)을 열 그룹으로 묶어 접기/펼치기 제공
     clearColumnGroups_(sheet);
@@ -347,14 +360,14 @@ function setupDashboardSheet_(sheet) {
       if (c.kind === 'gmp-member') { if (startIdx === -1) startIdx = i; count++; }
     });
     if (count > 0) {
-      const startCol = 4 + startIdx; // 데이터 열은 D(4)부터 시작
+      const startCol = MATRIX_START + startIdx;
       sheet.getRange(1, startCol, 1, count).shiftColumnGroupDepth(1);
       sheet.getColumnGroup(startCol, 1).collapse(); // 기본 접힘 (GMP WH 합계만 보이도록)
     }
   }
 
   sheet.setFrozenRows(2);
-  sheet.setFrozenColumns(3);
+  sheet.setFrozenColumns(4);
 }
 
 /** Dashboard의 기존 열 그룹을 모두 제거한다 (재구성 시 그룹 중첩 방지). */
@@ -638,4 +651,54 @@ function archiveOriginTabs() {
     ui.alert('✅ 아카이브 완료:\n\n' + done.join('\n') +
              '\n\n숨긴 탭은 아무 탭이나 우클릭 → "숨겨진 시트" 에서 다시 볼 수 있습니다.');
   }
+}
+
+/**
+ * [메뉴] 단위(Unit) 도입/갱신 — 한 번 실행으로 아래를 처리한다.
+ *   1) Settings_Item E1 헤더 'Unit' 보장
+ *   2) E2:E1000 에 단위 드롭다운(UNIT_OPTIONS) 적용
+ *   3) Item Name 이 있는데 Unit 이 빈 행을 'EA' 로 일괄 채움
+ *   4) Inventory(Unit 열) + Dashboard(Unit 열) 갱신
+ * roll/box 등 예외 품목만 이후 E열에서 직접 바꾸면 된다. (중복 실행 안전)
+ */
+function setupUnitColumn() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const s = getRequiredSheet_(ss, 'Settings_Item');
+  if (!s) return;
+
+  // 1) 헤더
+  s.getRange('E1').setValue('Unit').setFontWeight('bold');
+
+  // 2) 드롭다운 검증
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(UNIT_OPTIONS, true).setAllowInvalid(false).build();
+  s.getRange('E2:E1000').setDataValidation(rule);
+
+  // 3) 빈 Unit 칸을 'EA' 로 일괄 채움 (Item Name 이 있는 행만)
+  const last = s.getLastRow();
+  let filled = 0;
+  if (last >= 2) {
+    const names = s.getRange(2, 3, last - 1, 1).getValues(); // C: Item Name
+    const units = s.getRange(2, 5, last - 1, 1).getValues();  // E: Unit
+    for (let i = 0; i < units.length; i++) {
+      if (String(names[i][0]).trim() !== '' && String(units[i][0]).trim() === '') {
+        units[i][0] = 'EA';
+        filled++;
+      }
+    }
+    if (filled > 0) s.getRange(2, 5, units.length, 1).setValues(units);
+  }
+
+  // 4) Inventory / Dashboard 갱신
+  rebuildInv_(ss);
+  const dash = ss.getSheetByName('Dashboard');
+  if (dash) setupDashboardSheet_(dash);
+
+  SpreadsheetApp.flush();
+  ui.alert('✅ Unit 도입/갱신 완료\n' +
+           '- 헤더 및 드롭다운 설정\n' +
+           '- 빈 칸 ' + filled + '개를 EA 로 채움\n' +
+           '- Inventory / Dashboard 갱신\n\n' +
+           'roll/box 등 예외 품목만 Settings_Item E열에서 바꿔 주세요.');
 }
