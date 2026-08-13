@@ -58,6 +58,7 @@ function onOpen() {
     .addItem('대시보드 재구성 (Rebuild Dashboard)', 'rebuildDashboard')
     .addItem('편집 트리거 등록 (Install Trigger)', 'createTriggers')
     .addItem('시리얼 텍스트 변환 (Migrate Serials)', 'migrateSerialsToText')
+    .addItem('옛 원본 탭 아카이브 (Archive Origin Tabs)', 'archiveOriginTabs')
     .addToUi();
 }
 
@@ -611,4 +612,30 @@ function setupScrapSheet_(sheet) {
   sheet.getRange('A:A').setNumberFormat('yyyy-MM-dd HH:mm:ss');
   // F열(Serial Number) 텍스트 포맷 고정
   sheet.getRange('F:F').setNumberFormat('@');
+}
+
+/**
+ * [메뉴/1회성] 마이그레이션 이전 원본 스냅샷 탭(Inventory_Origin *)을 아카이브한다.
+ * - 이름 끝에 '_archive' 를 붙이고 시트를 숨긴다. (데이터는 이미 Ledger 로 이관됨)
+ * - 이미 '_archive' 가 붙은 탭은 건너뛴다(중복 실행 안전).
+ */
+function archiveOriginTabs() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const done = [];
+  ss.getSheets().forEach(function (sh) {
+    const name = sh.getName();
+    if (name.indexOf('Inventory_Origin') === 0 && name.indexOf('_archive') === -1) {
+      const newName = name + '_archive';
+      sh.setName(newName);
+      sh.hideSheet();
+      done.push(name + ' → ' + newName + ' (숨김)');
+    }
+  });
+  if (done.length === 0) {
+    ui.alert('ℹ️ 아카이브할 Inventory_Origin 탭이 없습니다 (이미 처리되었을 수 있습니다).');
+  } else {
+    ui.alert('✅ 아카이브 완료:\n\n' + done.join('\n') +
+             '\n\n숨긴 탭은 아무 탭이나 우클릭 → "숨겨진 시트" 에서 다시 볼 수 있습니다.');
+  }
 }
