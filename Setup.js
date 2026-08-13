@@ -55,6 +55,7 @@ function onOpen() {
     .addItem('🚀 전체 초기화 (Initialize)', 'initializeSystem')
     .addItem('입력폼 재설정 (Setup Form)', 'setupInputSheet')
     .addItem('재고 새로고침 (Rebuild Inventory)', 'rebuildInv')
+    .addItem('대시보드 재구성 (Rebuild Dashboard)', 'rebuildDashboard')
     .addItem('편집 트리거 등록 (Install Trigger)', 'createTriggers')
     .addItem('시리얼 텍스트 변환 (Migrate Serials)', 'migrateSerialsToText')
     .addToUi();
@@ -285,54 +286,112 @@ function addInvQty_(map, catOf, item, loc, serial, delta) {
 }
 
 /**
- * Dashboard — Inventory(정규화 재고 목록)를 기반으로 
- * 지정된 컬럼 순서(KR OFFICE -> GMP WH -> GMP 통로 -> 18/19구역 -> US OFFICE -> 투어 패키지)에 맞춰 매트릭스 생성
+ * Dashboard — Inventory(정규화 재고 목록)를 기반으로 아이템 × 위치 매트릭스를 만든다.
+ *
+ * 위치 열 순서는 Settings_Location(LIST_BUCKET)을 읽어 스크립트가 결정한다:
+ *   KR OFFICE → GMP WH(합계) → GMP (통로) → 18/19 세부구역 → US OFFICE
+ *   → (기타 물리 위치) → 투어 패키지(G…)
+ * 'GMP WH' 는 실제 위치가 아니라 통로 + 모든 세부구역 재고를 합산한 요약 열이다.
+ *
+ * 값은 라이브 수식(Inventory 참조)으로 채워지므로 Inventory가 갱신되면 자동 반영된다.
+ * Settings_Location 을 편집한 뒤에는 메뉴 '대시보드 재구성' 으로 열 구성을 갱신한다.
  */
 function setupDashboardSheet_(sheet) {
- sheet.clearContents();
+  const ss = sheet.getParent();
+  sheet.clearContents();
+
   sheet.getRange('A1').setValue('📊 [Inventory Dashboard]').setFontWeight('bold');
- sheet.getRange('A2').setValue('Category').setFontWeight('bold');
- sheet.getRange('B2').setValue('Item Name').setFontWeight('bold');
- sheet.getRange('C2').setValue('Total').setFontWeight('bold');
+  sheet.getRange('A2').setValue('Category').setFontWeight('bold');
+  sheet.getRange('B2').setValue('Item Name').setFontWeight('bold');
+  sheet.getRange('C2').setValue('Total').setFontWeight('bold');
+
+  sheet.getRange('D1').setFormula(
+    '=IF(Ledger!A2="Timestamp", "🕒 기록 없음", "🕒 최종 업데이트: " & TEXT(Ledger!A2, "yyyy-mm-dd HH:mm:ss"))'
+  ).setFontWeight('bold').setFontColor('#4a86e8');
+
+  // A3: Category → Item Name 이중 오름차순 정렬 (2열 배열이 A·B로 스필)
+  sheet.getRange('A3').setFormula(
+    '=IFERROR(SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), "")'
+  );
+
+  // C3: Total — A3와 동일한 정렬 순서(A3# 스필)를 재사용해 품목별 총합
+  sheet.getRange('C3').setFormula(
+    '=IFERROR(BYROW(CHOOSECOLS($A$3#, 2), LAMBDA(i, SUMIFS(Inventory!$F:$F, Inventory!$C:$C, i))), "")'
+  );
+
+  // D열 이후: 위치 매트릭스 (스크립트가 정한 순서 + GMP WH 합계 열)
+  const columns = buildDashboardColumns_(ss);
+  if (columns.length > 0) {
+    const headers = columns.map(function (c) { return c.label; });
+    sheet.getRange(2, 4, 1, headers.length).setValues([headers]).setFontWeight('bold');
+
+    const formulas = columns.map(function (c) {
+      const terms = c.locs.map(function (loc) {
+        return 'SUMIFS(Inventory!$F:$F, Inventory!$C:$C, i, Inventory!$D:$D, "' +
+               String(loc).replace(/"/g, '""') + '")';
+      }).join(' + ');
+      return '=IFERROR(BYROW(CHOOSECOLS($A$3#, 2), LAMBDA(i, ' + terms + ')), "")';
+    });
+    sheet.getRange(3, 4, 1, formulas.length).setFormulas([formulas]);
+  }
+
+  sheet.setFrozenRows(2);
+  sheet.setFrozenColumns(3);
+}
 
 
- sheet.getRange('D1').setFormula(
-   '=IF(Ledger!A2="Timestamp", "🕒 기록 없음", "🕒 최종 업데이트: " & TEXT(Ledger!A2, "yyyy-mm-dd HH:mm:ss"))'
- ).setFontWeight('bold').setFontColor('#4a86e8');
+/**
+ * Settings_Location(LIST_BUCKET)을 읽어 Dashboard 위치 열 구성을 순서대로 만든다.
+ * 반환: [{ label, locs: [실제위치...] }] — locs 가 여러 개면 합계(요약) 열.
+ */
+function buildDashboardColumns_(ss) {
+  const loc = ss.getSheetByName('Settings_Location');
+  if (!loc) return [];
+
+  const flat = function (rng) {
+    return rng.getValues()
+      .map(function (r) { return String(r[0]).trim(); })
+      .filter(function (v) { return v !== ''; });
+  };
+  const physical = flat(loc.getRange('A2:A1000'));
+  const tour = flat(loc.getRange('B2:B1000'));
+
+  const isZone = function (s) { return /^\d/.test(s); };          // 18-1-01, 19-1-10 …
+  const AISLE = 'GMP (통로)';
+  const aisle = physical.filter(function (s) { return s === AISLE; });
+  const zones = physical.filter(isZone);
+  const gmpMembers = aisle.concat(zones);                          // 통로 → 세부구역
+  const placed = {};
+  ['KR OFFICE', 'US OFFICE', AISLE].forEach(function (s) { placed[s] = true; });
+  zones.forEach(function (s) { placed[s] = true; });
+
+  const columns = [];
+  if (physical.indexOf('KR OFFICE') !== -1) columns.push({ label: 'KR OFFICE', locs: ['KR OFFICE'] });
+  if (gmpMembers.length > 0) columns.push({ label: 'GMP WH', locs: gmpMembers });   // 합계 열
+  gmpMembers.forEach(function (l) { columns.push({ label: l, locs: [l] }); });
+  if (physical.indexOf('US OFFICE') !== -1) columns.push({ label: 'US OFFICE', locs: ['US OFFICE'] });
+  physical.forEach(function (l) { if (!placed[l]) columns.push({ label: l, locs: [l] }); }); // 기타 물리 위치
+  tour.forEach(function (l) { columns.push({ label: l, locs: [l] }); });            // 투어 패키지
+
+  return columns;
+}
 
 
- // 🌟 [수정 1] A3: Category(1열) 오름차순, Item Name(2열) 오름차순으로 이중 정렬(SORT) 적용
- sheet.getRange('A3').setFormula(
-   '=IFERROR(SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), "")'
- );
-
-
- // 🌟 [수정 2] C3: A3와 동일하게 정렬된 배열에서 Item 명만 추출(CHOOSECOLS)하여 수량을 정확히 매칭
- sheet.getRange('C3').setFormula(
-   '=IFERROR(LET(' +
-   'sorted_data, SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), ' +
-   'items, CHOOSECOLS(sorted_data, 2), ' +
-   'BYROW(items, LAMBDA(i, SUMIFS(Inventory!$F:$F, Inventory!$C:$C, i)))), "")'
- );
-
-
- // D2: 버킷(위치) 헤더 설정
- sheet.getRange('D2').setFormula('=IFERROR(TRANSPOSE(TOCOL(LIST_BUCKET, 1, TRUE)), "")');
-
-
- // 🌟 [수정 3] D3: 매트릭스 내부 계산 기준도 A3와 완벽하게 동일한 정렬 규칙 적용
- sheet.getRange('D3').setFormula(
-   '=IFERROR(LET(' +
-   'sorted_data, SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), ' +
-   'items, CHOOSECOLS(sorted_data, 2), ' +
-   'buckets, TOCOL(LIST_BUCKET, 1, TRUE), ' +
-   'MAKEARRAY(ROWS(items), ROWS(buckets), LAMBDA(r, c, ' +
-   'SUMIFS(Inventory!$F:$F, Inventory!$C:$C, INDEX(items, r), Inventory!$D:$D, INDEX(buckets, c))))), "")'
- );
-
-
- sheet.setFrozenRows(2);
- sheet.setFrozenColumns(3);
+/**
+ * [메뉴] Dashboard 위치 열 구성을 다시 만든다.
+ * Settings_Location 을 편집(위치 추가/삭제/순서 변경)한 뒤 실행하면 반영된다.
+ */
+function rebuildDashboard() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const dash = ss.getSheetByName('Dashboard');
+  if (!dash) {
+    ui.alert('❌ 에러: Dashboard 시트를 찾을 수 없습니다.');
+    return;
+  }
+  setupDashboardSheet_(dash);
+  SpreadsheetApp.flush();
+  ui.alert('✅ 완료: 대시보드 위치 열 구성을 새로 만들었습니다.');
 }
 
 
