@@ -13,6 +13,15 @@
 /**
  * 🌟 [수정] Settings_Item 시트 단독 자동 채번
  */
+/**
+ * 단순(simple) onEdit 트리거.
+ * 설치형 트리거보다 디스패치가 빨라 폼 반응(드롭다운/색상 전환)이 더 즉각적이다.
+ * 실제 처리는 updateDynamicUI 가 담당한다. (설치형 트리거는 제거해 중복 실행 방지)
+ */
+function onEdit(e) {
+  updateDynamicUI(e);
+}
+
 function updateDynamicUI(e) {
   if (!e || !e.range) return;
   const range = e.range;

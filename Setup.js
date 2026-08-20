@@ -60,7 +60,7 @@ function onOpen() {
     .addItem('재고 새로고침 (Rebuild Inventory)', 'rebuildInv')
     .addItem('대시보드 재구성 (Rebuild Dashboard)', 'rebuildDashboard')
     .addItem('단위(Unit) 도입/갱신 (Setup Unit)', 'setupUnitColumn')
-    .addItem('편집 트리거 등록 (Install Trigger)', 'createTriggers')
+    .addItem('설치형 편집트리거 제거 (Use Fast onEdit)', 'removeInstallableEditTriggers')
     .addItem('시리얼 텍스트 변환 (Migrate Serials)', 'migrateSerialsToText')
     .addItem('옛 원본 탭 아카이브 (Archive Origin Tabs)', 'archiveOriginTabs')
     .addItem('투어 위치 정리 (Cleanup Tour Locations)', 'cleanupTourLocations')
@@ -848,4 +848,23 @@ function normalizeLedgerFormat() {
 
   SpreadsheetApp.flush();
   ui.alert('✅ 원장 서식 정리 완료: ' + (last - 1) + '개 행을 일반 서식으로 되돌렸습니다.');
+}
+
+/**
+ * [메뉴] 설치형(installable) updateDynamicUI 편집 트리거를 제거한다.
+ * 폼 반응은 이제 더 빠른 단순(simple) onEdit 트리거가 처리하므로, 설치형은 중복이라 제거한다.
+ */
+function removeInstallableEditTriggers() {
+  const ui = SpreadsheetApp.getUi();
+  const triggers = ScriptApp.getProjectTriggers();
+  let removed = 0;
+  for (let i = 0; i < triggers.length; i++) {
+    const t = triggers[i];
+    if (t.getHandlerFunction() === 'updateDynamicUI' && t.getEventType() === ScriptApp.EventType.ON_EDIT) {
+      ScriptApp.deleteTrigger(t);
+      removed++;
+    }
+  }
+  ui.alert('✅ 설치형 편집 트리거 ' + removed + '개를 제거했습니다.\n' +
+           '이제 더 빠른 단순(onEdit) 트리거가 폼 반응을 처리합니다.');
 }
