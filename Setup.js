@@ -66,6 +66,7 @@ function onOpen() {
     .addItem('투어 위치 정리 (Cleanup Tour Locations)', 'cleanupTourLocations')
     .addItem('위치 비우기·이동 (Relocate Stock)', 'relocateAllStock')
     .addItem('원장 서식 정리 (Normalize Ledger)', 'normalizeLedgerFormat')
+    .addItem('디버그: 폼 위치 (Debug Form)', 'debugFormLayout')
     .addToUi();
 }
 
@@ -848,4 +849,24 @@ function normalizeLedgerFormat() {
 
   SpreadsheetApp.flush();
   ui.alert('✅ 원장 서식 정리 완료: ' + (last - 1) + '개 행을 일반 서식으로 되돌렸습니다.');
+}
+
+/** [임시 디버그] Transaction 폼(B2:H12) 셀 위치와 값을 알림으로 보여준다. */
+function debugFormLayout() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = getRequiredSheet_(ss, 'Transaction');
+  if (!sh) return;
+  const startRow = 2, startCol = 2; // B2
+  const vals = sh.getRange(startRow, startCol, 11, 7).getValues(); // B2:H12
+  const out = [];
+  for (let r = 0; r < vals.length; r++) {
+    for (let c = 0; c < vals[r].length; c++) {
+      const v = vals[r][c];
+      if (v !== '' && v !== null) {
+        const a1 = sh.getRange(startRow + r, startCol + c).getA1Notation();
+        out.push(a1 + ' = ' + v);
+      }
+    }
+  }
+  SpreadsheetApp.getUi().alert('Transaction 폼 레이아웃:\n\n' + out.join('\n'));
 }
