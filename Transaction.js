@@ -126,7 +126,10 @@ function updateDynamicUI(e) {
   rng.setBackgrounds([[bgSerial], [bgFrom], [bgTo], [bgQty]]);
   rng.setFontColors([[fcSerial], [fcFrom], [fcTo], [fcQty]]);
 
-  SpreadsheetApp.getActiveSpreadsheet().toast('type=' + type + ' / isSerial=' + isSerial + ' / 적용완료', '✅ updateDynamicUI', 6);
+  var chk = inputSheet.getRange('F5:F8').getValues();
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    'type=' + type + ' | 계산 valTo=' + valTo + ' | 되읽기 F5=' + chk[0][0] + ' F6=' + chk[1][0] + ' F7=' + chk[2][0] + ' F8=' + chk[3][0],
+    '✅ readback', 12);
   } catch (err) {
     SpreadsheetApp.getActiveSpreadsheet().toast('오류: ' + (err && err.message ? err.message : err), '⚠️ updateDynamicUI', 15);
   }
