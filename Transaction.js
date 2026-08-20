@@ -108,20 +108,22 @@ function updateDynamicUI(e) {
     if (vQty == 1 && col === 3 && row === 4) valQty = ''; // 아이템 검색 변경 시 수량 1 초기화
   }
 
-  // 값/배경/글자색은 일괄(batch) 적용 — 서비스 왕복 최소화
   const rng = inputSheet.getRange('F5:F8');
-  rng.setValues([[valSerial], [valFrom], [valTo], [valQty]]);
-  rng.setBackgrounds([[bgSerial], [bgFrom], [bgTo], [bgQty]]);
-  rng.setFontColors([[fcSerial], [fcFrom], [fcTo], [fcQty]]);
 
-  // 검증(드롭다운): 전체를 확실히 초기화한 뒤 활성 셀에만 규칙 설정.
-  // (setDataValidations 배열에 null 을 섞으면 비활성 셀의 기존 드롭다운이
-  //  지워지지 않는 문제가 있어 명시적 clearDataValidations 로 처리)
+  // ① 값 (batch)
+  rng.setValues([[valSerial], [valFrom], [valTo], [valQty]]);
+
+  // ② 검증(드롭다운) — 기능상 가장 중요하므로 색상보다 먼저.
+  //    전체를 확실히 초기화한 뒤 활성 셀에만 규칙을 부여한다.
   rng.clearDataValidations();
   if (ruleFrom)   inputSheet.getRange('F6').setDataValidation(ruleFrom);
   if (ruleTo)     inputSheet.getRange('F7').setDataValidation(ruleTo);
   if (ruleSerial) inputSheet.getRange('F5').setDataValidation(ruleSerial);
   if (isSerial === 'YES') inputSheet.getRange('F5').setNumberFormat('@');
+
+  // ③ 색상 (batch) — 맨 마지막. 혹시 색상 API가 실패해도 위 동작에는 영향 없음.
+  rng.setBackgrounds([[bgSerial], [bgFrom], [bgTo], [bgQty]]);
+  rng.setFontColors([[fcSerial], [fcFrom], [fcTo], [fcQty]]);
 }
 
 /**
