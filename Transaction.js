@@ -48,6 +48,7 @@ function updateDynamicUI(e) {
 
   const inputSheet = sheet;
 
+  try {
   // 폼 현재값을 한 번에 읽기 (F3:F8) + 시리얼 관리 여부(AA1)
   const formValues = inputSheet.getRange('F3:F8').getValues();
   const type = formValues[0][0];   // F3: ADD/MOVE/REMOVE
@@ -124,6 +125,11 @@ function updateDynamicUI(e) {
   // ③ 색상 (batch) — 맨 마지막. 혹시 색상 API가 실패해도 위 동작에는 영향 없음.
   rng.setBackgrounds([[bgSerial], [bgFrom], [bgTo], [bgQty]]);
   rng.setFontColors([[fcSerial], [fcFrom], [fcTo], [fcQty]]);
+
+  SpreadsheetApp.getActiveSpreadsheet().toast('type=' + type + ' / isSerial=' + isSerial + ' / 적용완료', '✅ updateDynamicUI', 6);
+  } catch (err) {
+    SpreadsheetApp.getActiveSpreadsheet().toast('오류: ' + (err && err.message ? err.message : err), '⚠️ updateDynamicUI', 15);
+  }
 }
 
 /**
