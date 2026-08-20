@@ -64,6 +64,7 @@ function onOpen() {
     .addItem('시리얼 텍스트 변환 (Migrate Serials)', 'migrateSerialsToText')
     .addItem('옛 원본 탭 아카이브 (Archive Origin Tabs)', 'archiveOriginTabs')
     .addItem('투어 위치 정리 (Cleanup Tour Locations)', 'cleanupTourLocations')
+    .addItem('위치 비우기·이동 (Relocate Stock)', 'relocateAllStock')
     .addToUi();
 }
 
@@ -759,4 +760,69 @@ function cleanupTourLocations() {
            '\n\n해당 위치의 재고를 이동/폐기해 0으로 만든 뒤 다시 실행하면 삭제됩니다.';
   }
   ui.alert(msg);
+}
+
+/**
+ * [메뉴] 위치 비우기(이동) — 특정 위치의 현재고 전체를 다른 위치로 MOVE 처리한다.
+ * - FROM/TO 를 입력받아, Inventory 기준 FROM 위치의 모든 재고를 정상 MOVE 원장으로 기록.
+ * - 시리얼 품목은 시리얼별(수량 1)로 각각 이동. 실행 전 확인창을 띄운다.
+ * - 이동 후 Inventory / Dashboard 를 갱신한다. (예: G3 KR → KR OFFICE)
+ */
+function relocateAllStock() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+
+  const fromResp = ui.prompt('위치 비우기(이동)', 'FROM(출발) 위치명을 정확히 입력하세요:', ui.ButtonSet.OK_CANCEL);
+  if (fromResp.getSelectedButton() !== ui.Button.OK) return;
+  const from = String(fromResp.getResponseText()).trim();
+  const toResp = ui.prompt('위치 비우기(이동)', 'TO(도착) 위치명을 정확히 입력하세요:', ui.ButtonSet.OK_CANCEL);
+  if (toResp.getSelectedButton() !== ui.Button.OK) return;
+  const to = String(toResp.getResponseText()).trim();
+
+  if (!from || !to) { ui.alert('❌ FROM/TO 위치를 모두 입력해야 합니다.'); return; }
+  if (from === to) { ui.alert('❌ FROM 과 TO 가 동일합니다.'); return; }
+
+  rebuildInv_(ss); // 최신 재고 반영
+  const inv = ss.getSheetByName('Inventory');
+  const ledger = getRequiredSheet_(ss, 'Ledger');
+  if (!inv || !ledger) return;
+
+  const invLast = inv.getLastRow();
+  const rows = invLast > 1 ? inv.getRange(2, 1, invLast - 1, 6).getValues() : []; // A~F
+  const moves = rows.filter(function (r) { return String(r[3]).trim() === from && (Number(r[5]) || 0) > 0; });
+  if (moves.length === 0) { ui.alert('ℹ️ "' + from + '" 위치에 이동할 재고가 없습니다.'); return; }
+
+  const summary = moves.map(function (m) {
+    const ser = String(m[4]).trim();
+    return '• ' + m[2] + (ser && ser !== 'N/A' ? ' [' + ser + ']' : '') + ' × ' + (Number(m[5]) || 0);
+  }).join('\n');
+  const confirm = ui.alert('이동 확인',
+    from + ' → ' + to + ' 로 아래 재고를 이동합니다 (' + moves.length + '건):\n\n' + summary,
+    ui.ButtonSet.OK_CANCEL);
+  if (confirm !== ui.Button.OK) return;
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    const ts = new Date();
+    const newRows = moves.map(function (m) {
+      const ser = String(m[4]).trim();
+      return [ts, 'MOVE', m[0], m[1], m[2], (ser && ser !== '') ? ser : 'N/A',
+              from, to, Number(m[5]) || 0, 'SYSTEM', '위치 정리 이동 (' + from + ' → ' + to + ')'];
+    });
+    ledger.insertRowsAfter(1, newRows.length);
+    ledger.getRange(2, 1, newRows.length, 11).setValues(newRows);
+    ledger.getRange(2, 1, newRows.length, 1).setNumberFormat('yyyy-MM-dd HH:mm:ss');
+    ledger.getRange(2, LEDGER_COL.SERIAL + 1, newRows.length, 1).setNumberFormat('@');
+
+    rebuildInv_(ss);
+    const dash = ss.getSheetByName('Dashboard');
+    if (dash) setupDashboardSheet_(dash);
+    SpreadsheetApp.flush();
+    ui.alert('✅ 완료: ' + newRows.length + '건을 ' + from + ' → ' + to + ' 로 이동했습니다.');
+  } catch (e) {
+    ui.alert('❌ 오류: ' + e.toString());
+  } finally {
+    lock.releaseLock();
+  }
 }
