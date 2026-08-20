@@ -63,6 +63,7 @@ function onOpen() {
     .addItem('편집 트리거 등록 (Install Trigger)', 'createTriggers')
     .addItem('시리얼 텍스트 변환 (Migrate Serials)', 'migrateSerialsToText')
     .addItem('옛 원본 탭 아카이브 (Archive Origin Tabs)', 'archiveOriginTabs')
+    .addItem('투어 위치 정리 (Cleanup Tour Locations)', 'cleanupTourLocations')
     .addToUi();
 }
 
@@ -701,4 +702,61 @@ function setupUnitColumn() {
            '- 빈 칸 ' + filled + '개를 EA 로 채움\n' +
            '- Inventory / Dashboard 갱신\n\n' +
            'roll/box 등 예외 품목만 Settings_Item E열에서 바꿔 주세요.');
+}
+
+/**
+ * [메뉴] 투어 위치(Settings_Location B열) 중 현재고가 0인 항목만 안전하게 삭제한다.
+ * - 재고가 남은 투어 위치는 그대로 두고 경고로 알려준다(재고 orphan 방지).
+ * - 삭제 후 남은 항목을 위로 압축하고 Dashboard 를 갱신한다.
+ * - 재고가 남은 위치는 이동/폐기로 비운 뒤 다시 실행하면 삭제된다. (중복 실행 안전)
+ */
+function cleanupTourLocations() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const loc = getRequiredSheet_(ss, 'Settings_Location');
+  if (!loc) return;
+
+  // 최신 재고 반영 후, 위치별 현재고 합계 집계
+  rebuildInv_(ss);
+  const inv = ss.getSheetByName('Inventory');
+  const stockByLoc = {};
+  if (inv) {
+    const invLast = inv.getLastRow();
+    if (invLast >= 2) {
+      const rows = inv.getRange(2, 4, invLast - 1, 3).getValues(); // D:Location, E:Serial, F:Quantity
+      rows.forEach(function (r) {
+        const l = String(r[0]).trim();
+        if (l) stockByLoc[l] = (stockByLoc[l] || 0) + (Number(r[2]) || 0);
+      });
+    }
+  }
+
+  const last = loc.getLastRow();
+  if (last < 2) { ui.alert('ℹ️ Settings_Location 에 투어 패키지가 없습니다.'); return; }
+
+  const bVals = loc.getRange(2, 2, last - 1, 1).getValues(); // B2:B (Tour Package)
+  const keep = [];
+  const kept = [];
+  let removed = 0;
+  for (let i = 0; i < bVals.length; i++) {
+    const name = String(bVals[i][0]).trim();
+    if (name === '') continue;
+    if ((stockByLoc[name] || 0) > 0) { keep.push([bVals[i][0]]); kept.push(name + ' (재고 ' + stockByLoc[name] + ')'); }
+    else removed++;
+  }
+
+  // B열을 비우고, 유지할 항목만 위로 압축해 다시 기록
+  loc.getRange(2, 2, bVals.length, 1).clearContent();
+  if (keep.length > 0) loc.getRange(2, 2, keep.length, 1).setValues(keep);
+
+  const dash = ss.getSheetByName('Dashboard');
+  if (dash) setupDashboardSheet_(dash);
+  SpreadsheetApp.flush();
+
+  let msg = '✅ 투어 위치 정리 완료\n- 재고 0인 투어 위치 ' + removed + '개 삭제';
+  if (kept.length > 0) {
+    msg += '\n\n⚠️ 재고가 남아 유지된 위치 (' + kept.length + '개):\n- ' + kept.join('\n- ') +
+           '\n\n해당 위치의 재고를 이동/폐기해 0으로 만든 뒤 다시 실행하면 삭제됩니다.';
+  }
+  ui.alert(msg);
 }
