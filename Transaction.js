@@ -48,59 +48,73 @@ function updateDynamicUI(e) {
 
   const inputSheet = sheet;
 
-  if (range.getA1Notation() === 'F5') {
-    const rawValue = e.value; 
-    if (typeof rawValue === 'string') {
-      const norm = rawValue.trim().toUpperCase();
-      if (norm !== rawValue) range.setValue(norm);
-    }
-  }
-
+  // 폼 현재값을 한 번에 읽기 (F3:F8) + 시리얼 관리 여부(AA1)
   const formValues = inputSheet.getRange('F3:F8').getValues();
-  const type = formValues[0][0];      
-  const qtyVal = formValues[5][0];    
-  const isSerial = inputSheet.getRange('AA1').getValue(); 
+  const type = formValues[0][0];   // F3: ADD/MOVE/REMOVE
+  let vSerial = formValues[2][0];  // F5
+  const vFrom = formValues[3][0];  // F6
+  const vTo = formValues[4][0];    // F7
+  const vQty = formValues[5][0];   // F8
+  const isSerial = inputSheet.getRange('AA1').getValue(); // 'YES' / 'NO'
 
-  const serialCell = inputSheet.getRange('F5');
-  const fromLocCell = inputSheet.getRange('F6');
-  const toLocCell = inputSheet.getRange('F7'); 
-  const qtyCell = inputSheet.getRange('F8');
+  // F5 를 직접 편집한 경우: 공백 제거 + 대문자 정규화 (아래 일괄 쓰기에 반영)
+  if (range.getA1Notation() === 'F5' && typeof e.value === 'string') {
+    vSerial = e.value.trim().toUpperCase();
+  }
 
+  const ACT_BG = '#e2efda', ACT_FC = '#000000';   // 활성(입력 가능)
+  const OFF_BG = '#e1e1e1', OFF_FC = '#7f8c8d';   // 비활성(잠금)
+  const PICK_BG = '#fff2cc';                       // 시리얼 선택
+
+  const inRange = function (a1) {
+    return SpreadsheetApp.newDataValidation()
+      .requireValueInRange(inputSheet.getRange(a1)).setAllowInvalid(false).build();
+  };
+
+  // 각 셀(F5 시리얼, F6 FROM, F7 TO, F8 수량)의 최종 상태를 먼저 계산
+  let valSerial = vSerial, bgSerial = OFF_BG, fcSerial = OFF_FC, ruleSerial = null;
+  let valFrom = vFrom,     bgFrom = OFF_BG,   fcFrom = OFF_FC,   ruleFrom = null;
+  let valTo = vTo,         bgTo = OFF_BG,     fcTo = OFF_FC,     ruleTo = null;
+  let valQty = vQty,       bgQty = OFF_BG,    fcQty = OFF_FC;
+
+  // FROM (F6): MOVE/REMOVE 일 때만 활성
   if (type === 'MOVE' || type === 'REMOVE') {
-    const locRule = SpreadsheetApp.newDataValidation().requireValueInRange(inputSheet.getRange('W1:W')).setAllowInvalid(false).build();
-    fromLocCell.setDataValidation(locRule);
-    fromLocCell.setBackground('#e2efda').setFontColor('#000000');
-    if (fromLocCell.getValue() === 'N/A') fromLocCell.setValue('');
-  } else { 
-    fromLocCell.clearDataValidations().setValue('N/A').setBackground('#e1e1e1').setFontColor('#7f8c8d');
+    ruleFrom = inRange('W1:W'); bgFrom = ACT_BG; fcFrom = ACT_FC;
+    valFrom = (vFrom === 'N/A') ? '' : vFrom;
+  } else {
+    valFrom = 'N/A';
   }
 
+  // TO (F7): ADD/MOVE 일 때만 활성
   if (type === 'ADD' || type === 'MOVE') {
-    const toLocRule = SpreadsheetApp.newDataValidation().requireValueInRange(inputSheet.getRange('Y1:Y')).setAllowInvalid(false).build();
-    toLocCell.setDataValidation(toLocRule);
-    toLocCell.setBackground('#e2efda').setFontColor('#000000');
-    if (toLocCell.getValue() === 'N/A') toLocCell.setValue('');
-  } else { 
-    toLocCell.clearDataValidations().setValue('N/A').setBackground('#e1e1e1').setFontColor('#7f8c8d');
+    ruleTo = inRange('Y1:Y'); bgTo = ACT_BG; fcTo = ACT_FC;
+    valTo = (vTo === 'N/A') ? '' : vTo;
+  } else {
+    valTo = 'N/A';
   }
 
+  // SERIAL (F5) + QTY (F8)
   if (isSerial === 'YES') {
-    qtyCell.setValue(1).setBackground('#e1e1e1').setFontColor('#7f8c8d');
-    serialCell.setNumberFormat('@');
+    valQty = 1; // 시리얼 품목 수량 고정
     if (type === 'ADD') {
-      serialCell.clearDataValidations();
-      if (serialCell.getValue() === 'N/A') serialCell.setValue('');
-      serialCell.setBackground('#e2efda').setFontColor('#000000');
-    } else if (type === 'MOVE' || type === 'REMOVE') {
-      const serialRule = SpreadsheetApp.newDataValidation().requireValueInRange(inputSheet.getRange('X1:X')).setAllowInvalid(false).build();
-      serialCell.setDataValidation(serialRule);
-      serialCell.setBackground('#fff2cc').setFontColor('#000000');
+      valSerial = (vSerial === 'N/A') ? '' : vSerial;
+      bgSerial = ACT_BG; fcSerial = ACT_FC; // 신규 시리얼 자유 입력
+    } else { // MOVE/REMOVE: 재고에 있는 시리얼 중 선택
+      bgSerial = PICK_BG; fcSerial = ACT_FC; ruleSerial = inRange('X1:X');
     }
   } else {
-    serialCell.clearDataValidations().setValue('N/A').setBackground('#e1e1e1').setFontColor('#7f8c8d');
-    qtyCell.setBackground('#e2efda').setFontColor('#000000');
-    if (qtyVal == 1 && col === 3 && row === 4) qtyCell.setValue('');
+    valSerial = 'N/A';
+    bgQty = ACT_BG; fcQty = ACT_FC; // 일반 품목은 수량 자유 입력
+    if (vQty == 1 && col === 3 && row === 4) valQty = ''; // 아이템 검색 변경 시 수량 1 초기화
   }
+
+  // 일괄 적용 — F5:F8 을 값/배경/글자색/검증 각각 1회 호출로 처리 (서비스 왕복 최소화)
+  const rng = inputSheet.getRange('F5:F8');
+  rng.setValues([[valSerial], [valFrom], [valTo], [valQty]]);
+  rng.setBackgrounds([[bgSerial], [bgFrom], [bgTo], [bgQty]]);
+  rng.setFontColors([[fcSerial], [fcFrom], [fcTo], [fcQty]]);
+  rng.setDataValidations([[ruleSerial], [ruleFrom], [ruleTo], [null]]);
+  if (isSerial === 'YES') inputSheet.getRange('F5').setNumberFormat('@');
 }
 
 /**
