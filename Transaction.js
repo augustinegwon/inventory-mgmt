@@ -108,12 +108,19 @@ function updateDynamicUI(e) {
     if (vQty == 1 && col === 3 && row === 4) valQty = ''; // 아이템 검색 변경 시 수량 1 초기화
   }
 
-  // 일괄 적용 — F5:F8 을 값/배경/글자색/검증 각각 1회 호출로 처리 (서비스 왕복 최소화)
+  // 값/배경/글자색은 일괄(batch) 적용 — 서비스 왕복 최소화
   const rng = inputSheet.getRange('F5:F8');
   rng.setValues([[valSerial], [valFrom], [valTo], [valQty]]);
   rng.setBackgrounds([[bgSerial], [bgFrom], [bgTo], [bgQty]]);
   rng.setFontColors([[fcSerial], [fcFrom], [fcTo], [fcQty]]);
-  rng.setDataValidations([[ruleSerial], [ruleFrom], [ruleTo], [null]]);
+
+  // 검증(드롭다운): 전체를 확실히 초기화한 뒤 활성 셀에만 규칙 설정.
+  // (setDataValidations 배열에 null 을 섞으면 비활성 셀의 기존 드롭다운이
+  //  지워지지 않는 문제가 있어 명시적 clearDataValidations 로 처리)
+  rng.clearDataValidations();
+  if (ruleFrom)   inputSheet.getRange('F6').setDataValidation(ruleFrom);
+  if (ruleTo)     inputSheet.getRange('F7').setDataValidation(ruleTo);
+  if (ruleSerial) inputSheet.getRange('F5').setDataValidation(ruleSerial);
   if (isSerial === 'YES') inputSheet.getRange('F5').setNumberFormat('@');
 }
 
