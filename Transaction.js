@@ -48,7 +48,6 @@ function updateDynamicUI(e) {
 
   const inputSheet = sheet;
 
-  try {
   // 폼 현재값을 한 번에 읽기 (F3:F8) + 시리얼 관리 여부(AA1)
   const formValues = inputSheet.getRange('F3:F8').getValues();
   const type = formValues[0][0];   // F3: ADD/MOVE/REMOVE
@@ -111,28 +110,23 @@ function updateDynamicUI(e) {
 
   const rng = inputSheet.getRange('F5:F8');
 
-  // ① 값 (batch)
+  // ① 검증(드롭다운)을 먼저 전부 해제.
+  //    엄격한 검증(reject-input)이 걸린 셀에 'N/A' 등을 setValues 로 쓰면
+  //    "data validation rules 위반" 오류가 나므로, 값 쓰기 전에 반드시 해제한다.
+  rng.clearDataValidations();
+
+  // ② 값 (batch)
   rng.setValues([[valSerial], [valFrom], [valTo], [valQty]]);
 
-  // ② 검증(드롭다운) — 기능상 가장 중요하므로 색상보다 먼저.
-  //    전체를 확실히 초기화한 뒤 활성 셀에만 규칙을 부여한다.
-  rng.clearDataValidations();
+  // ③ 활성 셀에만 검증 다시 부여
   if (ruleFrom)   inputSheet.getRange('F6').setDataValidation(ruleFrom);
   if (ruleTo)     inputSheet.getRange('F7').setDataValidation(ruleTo);
   if (ruleSerial) inputSheet.getRange('F5').setDataValidation(ruleSerial);
   if (isSerial === 'YES') inputSheet.getRange('F5').setNumberFormat('@');
 
-  // ③ 색상 (batch) — 맨 마지막. 혹시 색상 API가 실패해도 위 동작에는 영향 없음.
+  // ④ 색상 (batch)
   rng.setBackgrounds([[bgSerial], [bgFrom], [bgTo], [bgQty]]);
   rng.setFontColors([[fcSerial], [fcFrom], [fcTo], [fcQty]]);
-
-  var chk = inputSheet.getRange('F5:F8').getValues();
-  SpreadsheetApp.getActiveSpreadsheet().toast(
-    'type=' + type + ' | 계산 valTo=' + valTo + ' | 되읽기 F5=' + chk[0][0] + ' F6=' + chk[1][0] + ' F7=' + chk[2][0] + ' F8=' + chk[3][0],
-    '✅ readback', 12);
-  } catch (err) {
-    SpreadsheetApp.getActiveSpreadsheet().toast('오류: ' + (err && err.message ? err.message : err), '⚠️ updateDynamicUI', 15);
-  }
 }
 
 /**
