@@ -222,9 +222,9 @@ function submitTransaction() {
     const finalFrom = (type === 'ADD') ? EXTERNAL_VENDOR : fromLoc;
     const finalTo = (type === 'REMOVE') ? EXTERNAL_SCRAP : toLoc;
 
-    ledgerSheet.insertRowAfter(1); 
+    ledgerSheet.insertRowAfter(1);
     const targetRange = ledgerSheet.getRange(2, 1, 1, 11);
-    targetRange.setFontWeight('normal'); 
+    targetRange.clearFormat(); // 헤더(1행) 서식(굵게·회색배경) 상속 제거
     targetRange.setValues([[
       timestamp, type, category, itemId, itemName, serial,
       finalFrom, finalTo, qty, worker, note

@@ -65,6 +65,7 @@ function onOpen() {
     .addItem('옛 원본 탭 아카이브 (Archive Origin Tabs)', 'archiveOriginTabs')
     .addItem('투어 위치 정리 (Cleanup Tour Locations)', 'cleanupTourLocations')
     .addItem('위치 비우기·이동 (Relocate Stock)', 'relocateAllStock')
+    .addItem('원장 서식 정리 (Normalize Ledger)', 'normalizeLedgerFormat')
     .addToUi();
 }
 
@@ -811,6 +812,7 @@ function relocateAllStock() {
               from, to, Number(m[5]) || 0, 'SYSTEM', '위치 정리 이동 (' + from + ' → ' + to + ')'];
     });
     ledger.insertRowsAfter(1, newRows.length);
+    ledger.getRange(2, 1, newRows.length, 11).clearFormat(); // 헤더 서식 상속 제거
     ledger.getRange(2, 1, newRows.length, 11).setValues(newRows);
     ledger.getRange(2, 1, newRows.length, 1).setNumberFormat('yyyy-MM-dd HH:mm:ss');
     ledger.getRange(2, LEDGER_COL.SERIAL + 1, newRows.length, 1).setNumberFormat('@');
@@ -825,4 +827,25 @@ function relocateAllStock() {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * [메뉴] 원장(Ledger) 서식 정리 — 기존 데이터 행의 상속된 헤더 서식(굵게·회색배경)을
+ * 일반 서식으로 되돌린다. 타임스탬프/시리얼의 숫자서식은 건드리지 않는다.
+ */
+function normalizeLedgerFormat() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const ledger = getRequiredSheet_(ss, 'Ledger');
+  if (!ledger) return;
+  const last = ledger.getLastRow();
+  if (last < 2) { ui.alert('ℹ️ 원장에 데이터가 없습니다.'); return; }
+
+  ledger.getRange(2, 1, last - 1, 11)
+    .setFontWeight('normal')
+    .setFontColor(null)
+    .setBackground(null); // 회색배경 제거(no-fill) — 숫자서식은 유지
+
+  SpreadsheetApp.flush();
+  ui.alert('✅ 원장 서식 정리 완료: ' + (last - 1) + '개 행을 일반 서식으로 되돌렸습니다.');
 }
