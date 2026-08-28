@@ -25,6 +25,7 @@ const LEDGER_COL = {
 
 const EXTERNAL_VENDOR = 'EXTERNAL (VENDOR)';
 const EXTERNAL_SCRAP = 'EXTERNAL (SCRAP)';
+const EXTERNAL_COUNT = 'EXTERNAL (COUNT)'; // 대량 실사 보정(SET) 전용 외부 표식
 
 // 단위(Unit) 드롭다운 허용 목록 — Settings_Item E열 검증에 사용
 const UNIT_OPTIONS = ['EA', 'box', 'roll', 'set', 'pack', 'pair', 'm'];
@@ -60,6 +61,9 @@ function onOpen() {
     .addItem('재고 새로고침 (Rebuild Inventory)', 'rebuildInv')
     .addItem('대시보드 재구성 (Rebuild Dashboard)', 'rebuildDashboard')
     .addItem('단위(Unit) 도입/갱신 (Setup Unit)', 'setupUnitColumn')
+    .addSubMenu(SpreadsheetApp.getUi().createMenu('대량 등록 (Bulk Add)')
+      .addItem('① 대량 등록 시트 준비 (Setup Sheet)', 'setupBulkAddSheet')
+      .addItem('② 대량 등록 실행 (Run)', 'bulkAdd'))
     .addItem('설치형 편집트리거 제거 (Use Fast onEdit)', 'removeInstallableEditTriggers')
     .addItem('시리얼 텍스트 변환 (Migrate Serials)', 'migrateSerialsToText')
     .addItem('옛 원본 탭 아카이브 (Archive Origin Tabs)', 'archiveOriginTabs')
@@ -897,4 +901,190 @@ function removeInstallableEditTriggers() {
   }
   ui.alert('✅ 설치형 편집 트리거 ' + removed + '개를 제거했습니다.\n' +
            '이제 더 빠른 단순(onEdit) 트리거가 폼 반응을 처리합니다.');
+}
+
+/**
+ * [메뉴] 대량 등록(BulkAdd) 스테이징 시트를 생성/초기화한다.
+ * 열: Category | Item | Location | Qty | Unit. (Category/Location/Unit 드롭다운)
+ */
+function setupBulkAddSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const sh = getOrCreateSheet_(ss, 'BulkAdd');
+  sh.clear();
+
+  sh.getRange('A1:E1').setValues([['Category', 'Item', 'Location', 'Qty', 'Unit']]).setFontWeight('bold');
+  sh.setFrozenRows(1);
+  sh.getRange('G1').setValue(
+    '실사 보정(SET) 방식: 각 (품목·위치) 재고를 입력 Qty 로 맞춥니다. 신규 품목은 자동 등록(Manage Serial=NO). ' +
+    '입력 후 메뉴 📦 Inventory → 대량 등록 → 실행.'
+  ).setFontColor('#7f8c8d');
+
+  // 드롭다운 (Category=LIST_CATEGORY / Location=LIST_BUCKET / Unit=UNIT_OPTIONS)
+  const catRange = ss.getRangeByName('LIST_CATEGORY');
+  const bucketRange = ss.getRangeByName('LIST_BUCKET');
+  if (catRange) {
+    sh.getRange('A2:A1000').setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInRange(catRange, true).setAllowInvalid(true).build());
+  }
+  if (bucketRange) {
+    sh.getRange('C2:C1000').setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInRange(bucketRange, true).setAllowInvalid(false).build());
+  }
+  sh.getRange('E2:E1000').setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(UNIT_OPTIONS, true).setAllowInvalid(true).build());
+
+  SpreadsheetApp.flush();
+  ui.alert('✅ BulkAdd 시트를 준비했습니다.\nCategory/Item/Location/Qty/Unit 를 입력한 뒤 "대량 등록 → 실행" 하세요.');
+}
+
+/**
+ * [메뉴] 대량 등록 실행 — BulkAdd 시트의 각 행을 "실사 보정(SET)" 으로 반영한다.
+ *  - 신규 품목: Settings_Item 에 자동 등록(중복 이름은 1회만, Manage Serial=NO).
+ *  - 각 (품목·위치) 현재고와 입력 Qty 의 차이만큼만 ADD/REMOVE 를 EXTERNAL (COUNT) 로 기록.
+ *  - 원자적: 한 행이라도 오류면 전체 미기록. 시리얼 품목/중복 행/미지 위치는 차단.
+ */
+function bulkAdd() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const sh = getRequiredSheet_(ss, 'BulkAdd'); if (!sh) return;
+  const settings = getRequiredSheet_(ss, 'Settings_Item'); if (!settings) return;
+  const ledger = getRequiredSheet_(ss, 'Ledger'); if (!ledger) return;
+
+  const last = sh.getLastRow();
+  if (last < 2) { ui.alert('ℹ️ 입력된 행이 없습니다.'); return; }
+  const data = sh.getRange(2, 1, last - 1, 5).getValues(); // A:E
+
+  // 마스터: name -> {id, cat, serial}, 그리고 최대 ID 번호
+  const master = {};
+  let maxIdNum = 1000;
+  const sLast = settings.getLastRow();
+  if (sLast >= 2) {
+    const sv = settings.getRange(2, 1, sLast - 1, 5).getValues();
+    for (let i = 0; i < sv.length; i++) {
+      const id = sv[i][0], cat = sv[i][1], name = String(sv[i][2]).trim();
+      if (name !== '') master[name] = { id: id, cat: cat, serial: String(sv[i][3]).toUpperCase() === 'YES' };
+      const m = String(id).match(/ITM-(\d+)/); if (m) { const n = parseInt(m[1], 10); if (n > maxIdNum) maxIdNum = n; }
+    }
+  }
+
+  // 유효 위치 집합 (Settings_Location A+B)
+  const validLoc = {};
+  const locSheet = ss.getSheetByName('Settings_Location');
+  if (locSheet && locSheet.getLastRow() >= 2) {
+    const lv = locSheet.getRange(2, 1, locSheet.getLastRow() - 1, 2).getValues();
+    for (let i = 0; i < lv.length; i++) for (let j = 0; j < lv[i].length; j++) {
+      const v = String(lv[i][j]).trim(); if (v) validLoc[v] = true;
+    }
+  }
+
+  // 현재고 맵: itemId||loc -> qty
+  const stock = {};
+  const inv = ss.getSheetByName('Inventory');
+  if (inv && inv.getLastRow() > 1) {
+    const iv = inv.getRange(2, 1, inv.getLastRow() - 1, 6).getValues();
+    for (let i = 0; i < iv.length; i++) {
+      const id = iv[i][1], loc = String(iv[i][3]).trim(), q = Number(iv[i][5]) || 0;
+      if (id) stock[id + '||' + loc] = (stock[id + '||' + loc] || 0) + q;
+    }
+  }
+
+  // 검증 + 계획
+  const errors = [];
+  const seen = {};
+  const newItems = {};   // name -> {id, cat, unit}
+  const plan = [];       // {itemId, name, cat, loc, target}
+  for (let i = 0; i < data.length; i++) {
+    const rowNo = i + 2;
+    let cat = String(data[i][0]).trim();
+    const name = String(data[i][1]).trim();
+    const loc = String(data[i][2]).trim();
+    const qtyRaw = data[i][3];
+    const unit = String(data[i][4]).trim();
+
+    if (name === '' && cat === '' && loc === '' && (qtyRaw === '' || qtyRaw === null)) continue; // 빈 행
+    if (name === '') { errors.push('행' + rowNo + ': Item 이 비었습니다.'); continue; }
+    if (loc === '') { errors.push('행' + rowNo + ': Location 이 비었습니다.'); continue; }
+    if (!validLoc[loc]) { errors.push('행' + rowNo + ': 알 수 없는 Location "' + loc + '" (Settings_Location 에 없음).'); continue; }
+    const q = Number(qtyRaw);
+    if (!(q >= 0) || Math.floor(q) !== q) { errors.push('행' + rowNo + ': Qty 는 0 이상 정수여야 합니다.'); continue; }
+
+    const dupKey = name + '||' + loc;
+    if (seen[dupKey]) { errors.push('행' + rowNo + ': 같은 품목·위치가 중복 입력됨 ("' + name + '" @ ' + loc + ').'); continue; }
+    seen[dupKey] = true;
+
+    let itemId, useCat;
+    if (master[name]) {
+      if (master[name].serial) { errors.push('행' + rowNo + ': "' + name + '" 는 시리얼 관리 품목이라 대량 등록 불가(개별 처리).'); continue; }
+      itemId = master[name].id; useCat = master[name].cat;
+    } else if (newItems[name]) {
+      itemId = newItems[name].id; useCat = newItems[name].cat;
+    } else {
+      if (cat === '') { errors.push('행' + rowNo + ': 신규 품목 "' + name + '" 은 Category 가 필요합니다.'); continue; }
+      itemId = 'ITM-' + (++maxIdNum);
+      newItems[name] = { id: itemId, cat: cat, unit: (unit || 'EA') };
+      useCat = cat;
+    }
+    plan.push({ itemId: itemId, name: name, cat: useCat, loc: loc, target: q });
+  }
+
+  if (errors.length) {
+    ui.alert('❌ 대량 등록 취소 — 오류 ' + errors.length + '건:\n\n' + errors.slice(0, 25).join('\n') + (errors.length > 25 ? '\n…' : ''));
+    return;
+  }
+  if (plan.length === 0) { ui.alert('ℹ️ 처리할 유효한 행이 없습니다.'); return; }
+
+  const newCount = Object.keys(newItems).length;
+  const confirm = ui.alert('대량 등록(실사 보정) 확인',
+    plan.length + '개 행을 처리합니다.\n' +
+    '· 신규 품목 등록: ' + newCount + '개 (Manage Serial=NO)\n' +
+    '· 각 (품목·위치) 재고를 입력 Qty 로 맞춥니다 (차이만 ADD/REMOVE 기록).\n\n진행할까요?',
+    ui.ButtonSet.OK_CANCEL);
+  if (confirm !== ui.Button.OK) return;
+
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(15000);
+
+    // 신규 마스터 append
+    const newRows = Object.keys(newItems).map(function (name) {
+      const it = newItems[name]; return [it.id, it.cat, name, 'NO', it.unit];
+    });
+    if (newRows.length) {
+      const at = settings.getLastRow() + 1;
+      settings.getRange(at, 1, newRows.length, 5).setValues(newRows);
+    }
+
+    // 실사 보정 원장(차이만)
+    const ts = new Date();
+    const ledgerRows = [];
+    let added = 0, removed = 0, unchanged = 0;
+    for (let i = 0; i < plan.length; i++) {
+      const p = plan[i];
+      const cur = stock[p.itemId + '||' + p.loc] || 0;
+      const diff = p.target - cur;
+      const note = '대량 실사 보정 (SET ' + p.target + ')';
+      if (diff > 0) { ledgerRows.push([ts, 'ADD', p.cat, p.itemId, p.name, 'N/A', EXTERNAL_COUNT, p.loc, diff, 'BULK', note]); added++; }
+      else if (diff < 0) { ledgerRows.push([ts, 'REMOVE', p.cat, p.itemId, p.name, 'N/A', p.loc, EXTERNAL_COUNT, -diff, 'BULK', note]); removed++; }
+      else unchanged++;
+    }
+    if (ledgerRows.length) {
+      ledger.insertRowsAfter(1, ledgerRows.length);
+      const tr = ledger.getRange(2, 1, ledgerRows.length, 11);
+      tr.clearFormat();
+      tr.setValues(ledgerRows);
+      ledger.getRange(2, 1, ledgerRows.length, 1).setNumberFormat('yyyy-MM-dd HH:mm:ss');
+      ledger.getRange(2, LEDGER_COL.SERIAL + 1, ledgerRows.length, 1).setNumberFormat('@');
+    }
+
+    rebuildInv_(ss);
+    if (last >= 2) sh.getRange(2, 1, last - 1, 5).clearContent(); // 스테이징 비우기
+
+    SpreadsheetApp.flush();
+    ui.alert('✅ 대량 등록 완료\n· 신규 품목 ' + newCount + '개 등록\n· 보정: 입고 ' + added + '행 / 출고 ' + removed + '행 / 변화없음 ' + unchanged + '행');
+  } catch (e) {
+    ui.alert('❌ 오류: ' + e.toString());
+  } finally {
+    lock.releaseLock();
+  }
 }
