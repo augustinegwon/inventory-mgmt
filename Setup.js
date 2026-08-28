@@ -284,8 +284,13 @@ function rebuildInv_(ss) {
   }
   inv.setFrozenRows(1);
 
-  const latestVal = ledger.getRange('A2').getValue();
-  if (latestVal instanceof Date) {
+  // 최종 업데이트 = 타임스탬프의 최댓값(가장 최근). 특정 행 위치에 의존하지 않는다.
+  let latestVal = null;
+  for (let i = 0; i < rows.length; i++) {
+    const t = rows[i][LEDGER_COL.TIMESTAMP];
+    if (t instanceof Date && (latestVal === null || t > latestVal)) latestVal = t;
+  }
+  if (latestVal) {
     const timeStr = Utilities.formatDate(latestVal, ss.getSpreadsheetTimeZone(), "yyyy-MM-dd HH:mm:ss");
     inv.getRange('G1').setValue('🕒 최종 업데이트: ' + timeStr).setFontWeight('bold').setFontColor('#4a86e8');
   } else {
@@ -339,8 +344,9 @@ function setupDashboardSheet_(sheet) {
   sheet.getRange('C2').setValue('Unit').setFontWeight('bold');
   sheet.getRange('D2').setValue('Total').setFontWeight('bold');
 
+  // 최종 업데이트 = 타임스탬프 열의 최댓값(MAX). 전체 열 참조라 행 삽입에도 밀리지 않는다.
   sheet.getRange('E1').setFormula(
-    '=IF(Ledger!A2="Timestamp", "🕒 기록 없음", "🕒 최종 업데이트: " & TEXT(Ledger!A2, "yyyy-mm-dd HH:mm:ss"))'
+    '=IF(COUNT(Ledger!A:A)=0, "🕒 기록 없음", "🕒 최종 업데이트: " & TEXT(MAX(Ledger!A:A), "yyyy-mm-dd HH:mm:ss"))'
   ).setFontWeight('bold').setFontColor('#4a86e8');
 
   // A3: Category → Item Name 이중 오름차순 정렬 (2열 배열이 A·B로 스필)
