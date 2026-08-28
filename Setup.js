@@ -243,10 +243,19 @@ function rebuildInv_(ss) {
     const qty = Number(r[LEDGER_COL.QTY]) || 0;
     const isSer = !!serialOf[id];
     const serial = isSer ? normSerial_(r[LEDGER_COL.SERIAL]) : '';
+    const ttype = r[LEDGER_COL.TYPE];
     const to = r[LEDGER_COL.TO];
     const from = r[LEDGER_COL.FROM];
-    if (!isExternal_(to)) addInvQty_(map, catOf, id, to, serial, qty);
-    if (!isExternal_(from)) addInvQty_(map, catOf, id, from, serial, -qty);
+    // 연산은 ADD / REMOVE 2종 기준: ADD → To 에 입고(+), REMOVE → From 에서 출고(-).
+    // (MOVE 는 신규 제출부터 REMOVE+ADD 두 행으로 분해되며, 아래 else 는 레거시 MOVE 행 호환용)
+    if (ttype === 'ADD') {
+      if (!isExternal_(to)) addInvQty_(map, catOf, id, to, serial, qty);
+    } else if (ttype === 'REMOVE') {
+      if (!isExternal_(from)) addInvQty_(map, catOf, id, from, serial, -qty);
+    } else { // 레거시 MOVE 등 — From/To 기반 처리
+      if (!isExternal_(to)) addInvQty_(map, catOf, id, to, serial, qty);
+      if (!isExternal_(from)) addInvQty_(map, catOf, id, from, serial, -qty);
+    }
   }
 
   const out = [];
@@ -293,6 +302,20 @@ function addInvQty_(map, catOf, item, loc, serial, delta) {
     map[key] = { cat: catOf[item] || '', item: item, loc: loc, serial: serial, qty: 0 };
   }
   map[key].qty += delta;
+}
+
+/** Settings_Item A열의 기존 ITM-#### 중 최대값 +1 로 다음 품목 ID를 만든다. */
+function nextItemId_(settingsSheet) {
+  const last = settingsSheet.getLastRow();
+  let maxNum = 1000;
+  if (last >= 2) {
+    const ids = settingsSheet.getRange(2, 1, last - 1, 1).getValues();
+    for (let i = 0; i < ids.length; i++) {
+      const m = String(ids[i][0]).match(/ITM-(\d+)/);
+      if (m) { const n = parseInt(m[1], 10); if (n > maxNum) maxNum = n; }
+    }
+  }
+  return 'ITM-' + (maxNum + 1);
 }
 
 /**
@@ -514,7 +537,8 @@ function setupInputSheet() {
 
   const typeRule = SpreadsheetApp.newDataValidation().requireValueInList(['ADD', 'MOVE', 'REMOVE'], true).setAllowInvalid(false).build();
   const categoryRule = SpreadsheetApp.newDataValidation().requireValueInRange(settingsSheet.getRange('B2:B'), true).setAllowInvalid(false).build();
-  const searchItemRule = SpreadsheetApp.newDataValidation().requireValueInRange(inputSheet.getRange('Z1:Z'), true).setAllowInvalid(false).build();
+  // allowInvalid=true: 기존 품목 드롭다운 + 신규 품목명 자유 입력 허용 (제출 시 ADD로 인라인 등록)
+  const searchItemRule = SpreadsheetApp.newDataValidation().requireValueInRange(inputSheet.getRange('Z1:Z'), true).setAllowInvalid(true).build();
   const toLocRule = SpreadsheetApp.newDataValidation().requireValueInRange(inputSheet.getRange('Y1:Y'), true).setAllowInvalid(false).build();
   const userRule = SpreadsheetApp.newDataValidation().requireValueInRange(userSheet.getRange('A2:A'), true).setAllowInvalid(true).build();
 

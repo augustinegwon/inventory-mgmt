@@ -208,8 +208,33 @@ function submitTransaction() {
   }
 
   if (!itemExists || !itemId) {
-    ui.alert('❌ 에러: 마스터 정보에 등록되지 않은 품목이거나 ID가 없습니다.');
-    return;
+    // 신규 품목: ADD 일 때만 Transaction 에서 인라인 등록을 허용한다.
+    if (type !== 'ADD') {
+      ui.alert('❌ 에러: "' + itemName + '" 은(는) 등록되지 않은 품목입니다.\n' +
+               '신규 품목은 ADD 로만 등록할 수 있습니다. (MOVE/REMOVE 불가)');
+      return;
+    }
+    const newCat = inputSheet.getRange('C3').getValue(); // 좌측 검색 Category 를 신규 품목 카테고리로 사용
+    if (!newCat) {
+      ui.alert('❌ 신규 품목 등록: 왼쪽 "Category"(C3)를 먼저 선택해 주세요.');
+      return;
+    }
+    const confirm = ui.alert('새 품목 등록',
+      '"' + itemName + '" 은(는) 마스터에 없는 품목입니다.\n\n' +
+      '아래 정보로 새로 등록하고 ADD 하시겠습니까?\n' +
+      '· Category : ' + newCat + '\n' +
+      '· Manage Serial : NO\n' +
+      '· Unit : EA\n\n' +
+      '(시리얼/단위는 이후 Settings_Item 에서 변경할 수 있습니다.)',
+      ui.ButtonSet.OK_CANCEL);
+    if (confirm !== ui.Button.OK) return;
+
+    itemId = nextItemId_(settingsSheet);
+    category = newCat;
+    isSerial = 'NO';
+    const newRow = settingsSheet.getLastRow() + 1;
+    settingsSheet.getRange(newRow, 1, 1, 5).setValues([[itemId, newCat, itemName, 'NO', 'EA']]);
+    itemExists = true;
   }
 
   let serial = 'N/A';
@@ -254,18 +279,35 @@ function submitTransaction() {
     }
 
     const timestamp = new Date();
-    const finalFrom = (type === 'ADD') ? EXTERNAL_VENDOR : fromLoc;
-    const finalTo = (type === 'REMOVE') ? EXTERNAL_SCRAP : toLoc;
 
-    ledgerSheet.insertRowAfter(1);
-    const targetRange = ledgerSheet.getRange(2, 1, 1, 11);
-    targetRange.clearFormat(); // 헤더(1행) 서식(굵게·회색배경) 상속 제거
-    targetRange.setValues([[
-      timestamp, type, category, itemId, itemName, serial,
-      finalFrom, finalTo, qty, worker, note
-    ]]);
-    ledgerSheet.getRange(2, 1).setNumberFormat('yyyy-MM-dd HH:mm:ss');
-    ledgerSheet.getRange(2, LEDGER_COL.SERIAL + 1).setNumberFormat('@');
+    if (type === 'MOVE') {
+      // MOVE 는 원장에 REMOVE(출발 -) + ADD(도착 +) 두 행으로 분해 기록한다.
+      // 두 행 모두 실제 출발/도착 위치를 보존하고, Note 에 MOVE 태그를 남긴다.
+      const moveNote = (note ? note + ' ' : '') + '(MOVE ' + fromLoc + ' → ' + toLoc + ')';
+      const rows = [
+        [timestamp, 'REMOVE', category, itemId, itemName, serial, fromLoc, toLoc, qty, worker, moveNote],
+        [timestamp, 'ADD',    category, itemId, itemName, serial, fromLoc, toLoc, qty, worker, moveNote]
+      ];
+      ledgerSheet.insertRowsAfter(1, 2);
+      const tr = ledgerSheet.getRange(2, 1, 2, 11);
+      tr.clearFormat();
+      tr.setValues(rows);
+      ledgerSheet.getRange(2, 1, 2, 1).setNumberFormat('yyyy-MM-dd HH:mm:ss');
+      ledgerSheet.getRange(2, LEDGER_COL.SERIAL + 1, 2, 1).setNumberFormat('@');
+    } else {
+      const finalFrom = (type === 'ADD') ? EXTERNAL_VENDOR : fromLoc;
+      const finalTo = (type === 'REMOVE') ? EXTERNAL_SCRAP : toLoc;
+
+      ledgerSheet.insertRowAfter(1);
+      const targetRange = ledgerSheet.getRange(2, 1, 1, 11);
+      targetRange.clearFormat(); // 헤더(1행) 서식(굵게·회색배경) 상속 제거
+      targetRange.setValues([[
+        timestamp, type, category, itemId, itemName, serial,
+        finalFrom, finalTo, qty, worker, note
+      ]]);
+      ledgerSheet.getRange(2, 1).setNumberFormat('yyyy-MM-dd HH:mm:ss');
+      ledgerSheet.getRange(2, LEDGER_COL.SERIAL + 1).setNumberFormat('@');
+    }
 
     inputSheet.getRangeList(['C4', 'F6', 'F7', 'F10']).clearContent();
     inputSheet.getRangeList(['F5']).setValue('N/A');
