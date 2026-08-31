@@ -1006,8 +1006,9 @@ function bulkAdd() {
     if (name === '') { errors.push('행' + rowNo + ': Item 이 비었습니다.'); continue; }
     if (loc === '') { errors.push('행' + rowNo + ': Location 이 비었습니다.'); continue; }
     if (!validLoc[loc]) { errors.push('행' + rowNo + ': 알 수 없는 Location "' + loc + '" (Settings_Location 에 없음).'); continue; }
+    if (qtyRaw === '' || qtyRaw === null) { errors.push('행' + rowNo + ': Qty 를 입력하세요 (빈 칸 불가). 0 은 명시적으로 입력.'); continue; }
     const q = Number(qtyRaw);
-    if (!(q >= 0) || Math.floor(q) !== q) { errors.push('행' + rowNo + ': Qty 는 0 이상 정수여야 합니다.'); continue; }
+    if (isNaN(q) || q < 0 || Math.floor(q) !== q) { errors.push('행' + rowNo + ': Qty 는 0 이상 정수여야 합니다.'); continue; }
 
     const dupKey = name + '||' + loc;
     if (seen[dupKey]) { errors.push('행' + rowNo + ': 같은 품목·위치가 중복 입력됨 ("' + name + '" @ ' + loc + ').'); continue; }
