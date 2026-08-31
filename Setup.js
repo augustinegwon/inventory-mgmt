@@ -1016,15 +1016,20 @@ function bulkAdd() {
 
     let itemId, useCat;
     if (master[name]) {
+      // 기존 품목: 마스터 재사용 (Qty 0 허용 = 그 위치 재고를 0으로 보정)
       if (master[name].serial) { errors.push('행' + rowNo + ': "' + name + '" 는 시리얼 관리 품목이라 대량 등록 불가(개별 처리).'); continue; }
       itemId = master[name].id; useCat = master[name].cat;
-    } else if (newItems[name]) {
-      itemId = newItems[name].id; useCat = newItems[name].cat;
     } else {
-      if (cat === '') { errors.push('행' + rowNo + ': 신규 품목 "' + name + '" 은 Category 가 필요합니다.'); continue; }
-      itemId = 'ITM-' + (++maxIdNum);
-      newItems[name] = { id: itemId, cat: cat, unit: (unit || 'EA') };
-      useCat = cat;
+      // 신규 품목: Qty 1 이상 필수 (0으로 등록하면 재고 없는 유령 품목이 됨)
+      if (q === 0) { errors.push('행' + rowNo + ': 신규 품목 "' + name + '" 은 Qty 가 1 이상이어야 합니다. (0 은 기존 품목만 허용)'); continue; }
+      if (newItems[name]) {
+        itemId = newItems[name].id; useCat = newItems[name].cat;
+      } else {
+        if (cat === '') { errors.push('행' + rowNo + ': 신규 품목 "' + name + '" 은 Category 가 필요합니다.'); continue; }
+        itemId = 'ITM-' + (++maxIdNum);
+        newItems[name] = { id: itemId, cat: cat, unit: (unit || 'EA') };
+        useCat = cat;
+      }
     }
     plan.push({ itemId: itemId, name: name, cat: useCat, loc: loc, target: q });
   }
