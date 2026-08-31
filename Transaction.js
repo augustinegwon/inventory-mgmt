@@ -30,9 +30,12 @@ function updateDynamicUI(e) {
 
   // 🌟 시트명 Settings_Item 으로 변경
   if (sheetName === 'Settings_Item') {
-    if ((range.getColumn() === 2 || range.getColumn() === 3) && range.getRow() > 1) {
-      const idCell = sheet.getRange(range.getRow(), 1); 
-      if (idCell.getValue() === '') {
+    const c = range.getColumn(), r = range.getRow();
+    if ((c === 2 || c === 3) && r > 1) {
+      const idCell = sheet.getRange(r, 1);
+      const idVal = idCell.getValue();
+      if (idVal === '') {
+        // 신규 품목: ITM-#### 자동 발급
         const lastRow = sheet.getLastRow();
         const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues().flat();
         let maxNum = 1000;
@@ -44,6 +47,10 @@ function updateDynamicUI(e) {
           }
         }
         idCell.setValue('ITM-' + (maxNum + 1));
+      } else if (c === 3) {
+        // 기존 품목 이름 변경(같은 ID): Ledger 의 Item Name 동기화 + 재고 재계산.
+        // (Dashboard 는 ID로 조인하므로 수량은 유지됨)
+        propagateItemRename_(sheet.getParent(), idVal, String(sheet.getRange(r, 3).getValue()));
       }
     }
     return;

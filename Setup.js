@@ -70,6 +70,7 @@ function onOpen() {
     .addItem('투어 위치 정리 (Cleanup Tour Locations)', 'cleanupTourLocations')
     .addItem('위치 비우기·이동 (Relocate Stock)', 'relocateAllStock')
     .addItem('원장 서식 정리 (Normalize Ledger)', 'normalizeLedgerFormat')
+    .addItem('원장 품목명 동기화 (Sync Ledger Names)', 'syncLedgerNames')
     .addToUi();
 }
 
@@ -353,19 +354,22 @@ function setupDashboardSheet_(sheet) {
     '=IF(COUNT(Ledger!A:A)=0, "🕒 기록 없음", "🕒 최종 업데이트: " & TEXT(MAX(Ledger!A:A), "yyyy-mm-dd HH:mm:ss"))'
   ).setFontWeight('bold').setFontColor('#4a86e8');
 
-  // A3: Category → Item Name 이중 오름차순 정렬 (2열 배열이 A·B로 스필)
-  sheet.getRange('A3').setFormula(
-    '=IFERROR(SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), "")'
-  );
+  // 정렬 배열 = {Category, Item Name, Item ID} 를 Category→Name 오름차순 정렬.
+  // 수량은 "이름"이 아니라 불변값인 "Item ID"(3열)로 조인하므로, 품목명을 바꿔도
+  // 수량이 0으로 깨지지 않는다. (Inventory 는 B열=Item ID)
+  const sorted = 'SORT(FILTER({LIST_CATEGORY, LIST_ITEM, Settings_Item!$A$2:$A$1000}, LIST_ITEM<>""), 1, TRUE, 2, TRUE)';
 
-  // C3: Unit — 품목명으로 Settings_Item(E열)에서 단위 조회
+  // A3: Category(1) + Item Name(2) 스필 (A·B)
+  sheet.getRange('A3').setFormula('=IFERROR(CHOOSECOLS(' + sorted + ', 1, 2), "")');
+
+  // C3: Unit — Item ID(3열)로 Settings_Item(A:E)에서 단위(5열) 조회
   sheet.getRange('C3').setFormula(
-    '=IFERROR(BYROW(CHOOSECOLS(SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), 2), LAMBDA(i, IFERROR(VLOOKUP(i, Settings_Item!$C:$E, 3, FALSE), ""))), "")'
+    '=IFERROR(BYROW(CHOOSECOLS(' + sorted + ', 3), LAMBDA(id, IFERROR(VLOOKUP(id, Settings_Item!$A:$E, 5, FALSE), ""))), "")'
   );
 
-  // D3: Total — A3와 동일한 정렬식(SORT/FILTER)으로 품목 순서를 맞춰 총합
+  // D3: Total — Item ID 로 Inventory 합산 (Inventory!$B:$B = Item ID)
   sheet.getRange('D3').setFormula(
-    '=IFERROR(BYROW(CHOOSECOLS(SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), 2), LAMBDA(i, SUMIFS(Inventory!$F:$F, Inventory!$C:$C, i))), "")'
+    '=IFERROR(BYROW(CHOOSECOLS(' + sorted + ', 3), LAMBDA(id, SUMIFS(Inventory!$F:$F, Inventory!$B:$B, id))), "")'
   );
 
   // E열 이후: 위치 매트릭스 (스크립트가 정한 순서 + GMP WH 합계 열)
@@ -382,10 +386,10 @@ function setupDashboardSheet_(sheet) {
 
     const formulas = columns.map(function (c) {
       const terms = c.locs.map(function (loc) {
-        return 'SUMIFS(Inventory!$F:$F, Inventory!$C:$C, i, Inventory!$D:$D, "' +
+        return 'SUMIFS(Inventory!$F:$F, Inventory!$B:$B, id, Inventory!$D:$D, "' +
                String(loc).replace(/"/g, '""') + '")';
       }).join(' + ');
-      return '=IFERROR(BYROW(CHOOSECOLS(SORT(FILTER({LIST_CATEGORY, LIST_ITEM}, LIST_ITEM<>""), 1, TRUE, 2, TRUE), 2), LAMBDA(i, ' + terms + ')), "")';
+      return '=IFERROR(BYROW(CHOOSECOLS(' + sorted + ', 3), LAMBDA(id, ' + terms + ')), "")';
     });
     sheet.getRange(3, MATRIX_START, 1, formulas.length).setFormulas([formulas]);
 
@@ -1093,4 +1097,56 @@ function bulkAdd() {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * 품목 이름 변경 전파: 주어진 Item ID 의 모든 Ledger 행 Item Name 을 새 이름으로 맞추고
+ * 재고를 재계산한다. (Item ID 는 불변이므로 수량은 그대로 유지됨)
+ */
+function propagateItemRename_(ss, itemId, newName) {
+  if (!itemId) return;
+  const ledger = ss.getSheetByName('Ledger');
+  if (ledger && ledger.getLastRow() >= 2) {
+    const n = ledger.getLastRow() - 1;
+    const ids = ledger.getRange(2, LEDGER_COL.ITEM_ID + 1, n, 1).getValues();   // D열(Item ID)
+    const names = ledger.getRange(2, LEDGER_COL.ITEM_NAME + 1, n, 1).getValues(); // E열(Item Name)
+    let changed = false;
+    for (let i = 0; i < ids.length; i++) {
+      if (String(ids[i][0]) === String(itemId) && names[i][0] !== newName) { names[i][0] = newName; changed = true; }
+    }
+    if (changed) ledger.getRange(2, LEDGER_COL.ITEM_NAME + 1, n, 1).setValues(names);
+  }
+  rebuildInv_(ss); // Inventory 의 Item Name(및 정렬) 최신화
+}
+
+/**
+ * [메뉴] 원장의 모든 Item Name 을 Settings_Item 의 현재 이름(Item ID 기준)으로 일괄 동기화한다.
+ * 과거에 이름을 바꿔 원장 이름이 옛 값으로 남아 있는 경우 한 번에 정리.
+ */
+function syncLedgerNames() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const settings = getRequiredSheet_(ss, 'Settings_Item'); if (!settings) return;
+  const ledger = getRequiredSheet_(ss, 'Ledger'); if (!ledger) return;
+
+  const nameOf = {};
+  const sLast = settings.getLastRow();
+  if (sLast >= 2) {
+    const sv = settings.getRange(2, 1, sLast - 1, 3).getValues(); // A:ID, C:Name
+    for (let i = 0; i < sv.length; i++) { if (sv[i][0]) nameOf[String(sv[i][0])] = sv[i][2]; }
+  }
+  const lLast = ledger.getLastRow();
+  if (lLast < 2) { ui.alert('ℹ️ 원장에 데이터가 없습니다.'); return; }
+  const n = lLast - 1;
+  const ids = ledger.getRange(2, LEDGER_COL.ITEM_ID + 1, n, 1).getValues();
+  const names = ledger.getRange(2, LEDGER_COL.ITEM_NAME + 1, n, 1).getValues();
+  let changed = 0;
+  for (let i = 0; i < ids.length; i++) {
+    const cur = nameOf[String(ids[i][0])];
+    if (cur !== undefined && cur !== '' && names[i][0] !== cur) { names[i][0] = cur; changed++; }
+  }
+  if (changed > 0) ledger.getRange(2, LEDGER_COL.ITEM_NAME + 1, n, 1).setValues(names);
+  rebuildInv_(ss);
+  SpreadsheetApp.flush();
+  ui.alert('✅ 원장 Item Name 동기화 완료: ' + changed + '건 갱신.');
 }
