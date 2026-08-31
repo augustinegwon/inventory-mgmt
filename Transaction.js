@@ -19,7 +19,43 @@
  * 실제 처리는 updateDynamicUI 가 담당한다. (설치형 트리거는 제거해 중복 실행 방지)
  */
 function onEdit(e) {
+  uppercaseEdit_(e);   // 모든 시트: 입력한 영문을 대문자로 자동 변환
   updateDynamicUI(e);
+}
+
+/**
+ * 편집된 셀의 텍스트를 대문자로 변환한다 (모든 시트 공통).
+ * - 수식(=…), 숫자, 빈 값은 건드리지 않는다. 한글 등은 영향 없음.
+ * - 붙여넣기(여러 셀)도 처리. 엄격한 드롭다운 위반 등은 무시(원본 유지).
+ */
+function uppercaseEdit_(e) {
+  if (!e || !e.range) return;
+  const range = e.range;
+  try {
+    if (range.getNumRows() === 1 && range.getNumColumns() === 1) {
+      const v = e.value;                       // 단일 셀: 입력값 사용(추가 읽기 없음)
+      if (typeof v !== 'string' || v.charAt(0) === '=') return;
+      const up = v.toUpperCase();
+      if (up !== v) range.setValue(up);
+    } else {
+      const values = range.getValues();
+      const formulas = range.getFormulas();
+      let changed = false;
+      for (let r = 0; r < values.length; r++) {
+        for (let c = 0; c < values[r].length; c++) {
+          if (formulas[r][c] !== '') continue;  // 수식 셀 skip
+          const v = values[r][c];
+          if (typeof v === 'string') {
+            const up = v.toUpperCase();
+            if (up !== v) { values[r][c] = up; changed = true; }
+          }
+        }
+      }
+      if (changed) range.setValues(values);
+    }
+  } catch (err) {
+    // 엄격한 데이터 검증 위반 등으로 쓰기가 거부되면 원본을 그대로 둔다.
+  }
 }
 
 function updateDynamicUI(e) {
