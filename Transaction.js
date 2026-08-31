@@ -33,10 +33,13 @@ function uppercaseEdit_(e) {
   const range = e.range;
   try {
     if (range.getNumRows() === 1 && range.getNumColumns() === 1) {
-      const v = e.value;                       // 단일 셀: 입력값 사용(추가 읽기 없음)
-      if (typeof v !== 'string' || v.charAt(0) === '=') return;
-      const up = v.toUpperCase();
-      if (up !== v) range.setValue(up);
+      // e.value 는 붙여넣기 때 비어(undefined) 있으므로, 셀의 실제 값을 직접 읽는다.
+      if (range.getFormula() !== '') return;    // 수식 skip
+      const v = range.getValue();
+      if (typeof v === 'string') {
+        const up = v.toUpperCase();
+        if (up !== v) range.setValue(up);
+      }
     } else {
       const values = range.getValues();
       const formulas = range.getFormulas();
